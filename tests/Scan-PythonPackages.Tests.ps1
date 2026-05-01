@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Pester v5 test suite for Scan-PythonPackages.ps1 v1.3.
+    Pester v5 test suite for src\Scan-PythonPackages.ps1.
     Dot-sources the production script inside BeforeAll so function definitions
     are in scope during test execution, not just during discovery.
     The production main block is skipped because InvocationName -ne '.'.
@@ -275,7 +275,7 @@ Describe 'Get-PackageUnits archive-extension classification' {
 }
 
 # ============================================================
-# Fixture corpus manifest (v1.3 scanner-output contract)
+# Fixture corpus manifest (v1.4 scanner-output contract)
 # ============================================================
 
 Describe 'Fixture corpus manifest' {
@@ -287,19 +287,19 @@ Describe 'Fixture corpus manifest' {
         $script:FixtureManifest = Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
     }
 
-    It 'Uses schemaVersion 1.3 for scanner v1.3' {
-        $script:FixtureManifest.schemaVersion | Should -Be '1.3'
-        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.3'
+    It 'Uses schemaVersion 1.4 for scanner v1.4' {
+        $script:FixtureManifest.schemaVersion | Should -Be '1.4'
+        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.4'
     }
 
     It 'Contains the required corpus directories' {
-        foreach ($name in @('archives', 'loose', 'empty', 'non-python', 'malformed')) {
+        foreach ($name in @('archives', 'loose', 'empty', 'non-python', 'mixed', 'malformed')) {
             Join-Path $script:CorpusRoot $name | Should -Exist
         }
     }
 
     It 'Declares every generated fixture path and every path exists' {
-        @($script:FixtureManifest.fixtures).Count | Should -Be 26
+        @($script:FixtureManifest.fixtures).Count | Should -Be 27
 
         foreach ($fixture in $script:FixtureManifest.fixtures) {
             $fixture.path | Should -Not -BeNullOrEmpty
@@ -367,6 +367,54 @@ Describe 'Fixture corpus manifest' {
         $expected.min | Should -Be 1
     }
 
+    It 'Declares unsupported-file expectations for folder fixtures' {
+        $nonPython = $script:FixtureManifest.fixtures | Where-Object { $_.path -eq 'non-python' }
+        $mixed = $script:FixtureManifest.fixtures | Where-Object { $_.path -eq 'mixed' }
+
+        @($nonPython.expectedUnsupportedFiles).Count | Should -Be 3
+        @($nonPython.expectedUnsupportedFiles) | Should -Contain 'README.md'
+        @($nonPython.expectedUnsupportedFiles) | Should -Contain 'data.csv'
+        @($nonPython.expectedUnsupportedFiles) | Should -Contain 'photo.jpg'
+        @($mixed.expectedUnsupportedFiles).Count | Should -Be 2
+        @($mixed.expectedUnsupportedFiles) | Should -Contain 'README.md'
+        @($mixed.expectedUnsupportedFiles) | Should -Contain 'photo.jpg'
+        $nonPython.expectsJson | Should -BeTrue
+        $mixed.expectsJson | Should -BeTrue
+    }
+}
+
+# ============================================================
+# Find-UnsupportedFiles
+# ============================================================
+
+Describe 'Find-UnsupportedFiles' {
+
+    BeforeEach {
+        $script:UnsupportedRoot = Join-Path $TestDrive 'unsupported-scan-root'
+        New-Item -ItemType Directory -Path $script:UnsupportedRoot -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:UnsupportedRoot '.reports') -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot 'module.py'), "pass`n")
+        [System.IO.File]::WriteAllBytes((Join-Path $script:UnsupportedRoot 'pkg.tar.gz'), [byte[]](31,139,8,0))
+        [System.IO.File]::WriteAllBytes((Join-Path $script:UnsupportedRoot 'package.whl'), [byte[]](80,75,3,4))
+        [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot 'README.md'), "# readme`n")
+        [System.IO.File]::WriteAllBytes((Join-Path $script:UnsupportedRoot 'photo.JPG'), [byte[]](255,216,255,217))
+        [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot '.reports\summary_previous.txt'), "old report")
+    }
+
+    It 'Returns only unsupported files sorted by relative path' {
+        $unsupported = @(Find-UnsupportedFiles -ScanRoot $script:UnsupportedRoot)
+
+        @($unsupported.RelativePath) | Should -Be @('photo.JPG', 'README.md')
+        @($unsupported.Extension) | Should -Be @('.jpg', '.md')
+    }
+
+    It 'Does not flag compound archive suffixes or scanner report artifacts' {
+        $unsupported = @(Find-UnsupportedFiles -ScanRoot $script:UnsupportedRoot)
+
+        @($unsupported.RelativePath) | Should -Not -Contain 'pkg.tar.gz'
+        @($unsupported.RelativePath) | Should -Not -Contain 'summary_previous.txt'
+        @($unsupported.RelativePath | Where-Object { $_ -like '.reports*' }) | Should -BeNullOrEmpty
+    }
 }
 
 # ============================================================

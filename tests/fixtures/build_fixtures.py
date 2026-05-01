@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build deterministic scanner fixtures for Scan-PythonPackages.ps1 v1.3."""
+"""Build deterministic scanner fixtures for src/Scan-PythonPackages.ps1 v1.4."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ ARCHIVES_DIR = CORPUS_ROOT / "archives"
 LOOSE_DIR = CORPUS_ROOT / "loose"
 EMPTY_DIR = CORPUS_ROOT / "empty"
 NON_PYTHON_DIR = CORPUS_ROOT / "non-python"
+MIXED_DIR = CORPUS_ROOT / "mixed"
 MALFORMED_DIR = CORPUS_ROOT / "malformed"
 
 FIXED_ZIP_DT = (2026, 1, 1, 0, 0, 0)
@@ -125,8 +126,9 @@ def make_zip(filename: str, files: dict[str, str | bytes]) -> None:
             zip_write(zf, arcname, data)
 
 
-def make_tar(filename: str, files: dict[str, str | bytes]) -> None:
-    path = ARCHIVES_DIR / filename
+def make_tar(filename: str, files: dict[str, str | bytes], output_dir: Path = ARCHIVES_DIR) -> None:
+    path = output_dir / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=FIXED_EPOCH) as gz:
             with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tf:
@@ -159,6 +161,7 @@ def fixture(
     expects_sbom: bool = False,
     expected_sbom: dict[str, object] | None = None,
     expects_json: bool = True,
+    expected_unsupported_files: list[str] | None = None,
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "path": path,
@@ -171,13 +174,15 @@ def fixture(
     }
     if expected_sbom is not None:
         item["expectedSbom"] = expected_sbom
+    if expected_unsupported_files is not None:
+        item["expectedUnsupportedFiles"] = expected_unsupported_files
     return item
 
 
 def build() -> list[dict[str, object]]:
     if CORPUS_ROOT.exists():
         shutil.rmtree(CORPUS_ROOT)
-    for directory in (ARCHIVES_DIR, LOOSE_DIR, EMPTY_DIR, NON_PYTHON_DIR, MALFORMED_DIR):
+    for directory in (ARCHIVES_DIR, LOOSE_DIR, EMPTY_DIR, NON_PYTHON_DIR, MIXED_DIR, MALFORMED_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
     token = github_token()
@@ -239,6 +244,10 @@ def build() -> list[dict[str, object]]:
     write_file(NON_PYTHON_DIR / "README.md", text_bytes("# Non-Python fixture\n"))
     write_file(NON_PYTHON_DIR / "data.csv", text_bytes("id,value\n1,fixture\n"))
     write_file(NON_PYTHON_DIR / "photo.jpg", b"\xff\xd8\xff\xe0" + seeded_bytes("jpg", 32) + b"\xff\xd9")
+    write_file(MIXED_DIR / "clean_module.py", text_bytes("pass\n"))
+    write_file(MIXED_DIR / "README.md", text_bytes("# Mixed fixture\n"))
+    write_file(MIXED_DIR / "photo.jpg", b"\xff\xd8\xff\xe0" + seeded_bytes("mixed-jpg", 32) + b"\xff\xd9")
+    make_tar("sourcedist_pkg-1.0.tar.gz", {"sourcedist_pkg-1.0/setup.py": "from setuptools import setup\nsetup(name='sourcedist_pkg', version='1.0')\n", "sourcedist_pkg-1.0/sourcedist_pkg/__init__.py": "pass\n"}, MIXED_DIR)
 
     fixtures = [
         fixture("archives/clean_pkg-1.0-py3-none-any.whl", "archive", "Clean wheel baseline", "CLEAN"),
@@ -266,12 +275,13 @@ def build() -> list[dict[str, object]]:
         fixture("loose/bad_eval.py", "pyfile", "Loose Bandit B307 trigger", "MEDIUM", [finding("Bandit", "MEDIUM", test_id="B307")]),
         fixture("loose/with_secret.pyw", "pyfile", "Loose .pyw detect-secrets trigger", "HIGH", [finding("detect-secrets", "HIGH")]),
         fixture("empty", "directory", "Empty folder early-exit coverage", "CLEAN", [], False, None, False),
-        fixture("non-python", "directory", "Non-Python early-exit coverage", "CLEAN", [], False, None, False),
+        fixture("non-python", "directory", "Unsupported-only folder produces a clean warning report", "CLEAN", [], False, None, True, ["README.md", "data.csv", "photo.jpg"]),
+        fixture("mixed", "directory", "Supported and unsupported files mixed", "CLEAN", [], False, None, True, ["README.md", "photo.jpg"]),
     ]
 
     manifest = {
-        "schemaVersion": "1.3",
-        "scannerVersionTarget": "1.3",
+        "schemaVersion": "1.4",
+        "scannerVersionTarget": "1.4",
         "fixtures": fixtures,
     }
     write_file(CORPUS_ROOT / "manifest.json", text_bytes(json.dumps(manifest, indent=2, sort_keys=True) + "\n"))

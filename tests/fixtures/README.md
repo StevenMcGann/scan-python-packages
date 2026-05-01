@@ -1,6 +1,6 @@
 # Deterministic Scanner Fixture Corpus
 
-This directory contains the source generator for the `Scan-PythonPackages.ps1` v1.3 test corpus. The generated files live under `tests/fixtures/corpus/` and are used by the Pester suite to validate fixture manifest schema, expected scanner findings, JSON summary expectations, and SBOM expectations.
+This directory contains the source generator for the `src\Scan-PythonPackages.ps1` v1.4 test corpus. The generated files live under `tests/fixtures/corpus/` and are used by the Pester suite to validate the fixture manifest schema and declared scanner expectations, including findings, JSON summaries, SBOMs, and unsupported files for folder fixtures.
 
 Regenerate the corpus from any working directory:
 
@@ -28,9 +28,9 @@ The manifest schema is versioned. The current `manifest.json` uses:
 
 ```json
 {
-  "schemaVersion": "1.3",
-  "scannerVersionTarget": "1.3"
+  "schemaVersion": "1.4",
+  "scannerVersionTarget": "1.4"
 }
 ```
 
-Pester tests assert this schema version when loading the manifest. Fixture entries include expected text findings, JSON-summary expectations, and SBOM presence/component-count expectations for v1.3 scanner output validation.
+Pester tests assert this schema version when loading the manifest. Fixture entries include expected text findings, JSON-summary expectations, SBOM presence/component-count expectations, and optional `expectedUnsupportedFiles` arrays for v1.4 scanner expectations.

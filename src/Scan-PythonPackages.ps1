@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Scan-PythonPackages_v1_3.ps1 — Static security scanner for submitted Python packages.
+    Scan-PythonPackages_v1_4.ps1 — Static security scanner for submitted Python packages.
 
 .DESCRIPTION
     Designed for media transfer review workflows where untrusted Python packages
@@ -15,8 +15,9 @@
            - Hardcoded secrets / credentials (detect-secrets)
            - Known CVE vulnerabilities in dependencies (pip-audit)
            - Presence of native binaries (.pyd, .so, .dll)
-      5. Writes a flat human-readable summary report for operator review.
-      6. Writes a timestamped run log for troubleshooting and audit purposes.
+      5. Surfaces unsupported files in the scan root so operators can review skipped content.
+      6. Writes a flat human-readable summary report for operator review.
+      7. Writes a timestamped run log for troubleshooting and audit purposes.
 
     All analysis is STATIC — no package code is executed at any point.
 
@@ -30,7 +31,7 @@
 
 .NOTES
     Author      : Generated for media transfer security review workflow
-    Version     : 1.3
+    Version     : 1.4
     Requires    : PowerShell 5.1+, Python 3.x (with pip), internet access for tool install
     Output      : <scan-root>\.reports\summary_<timestamp>.txt           (operator report)
                   <scan-root>\.reports\summary_<timestamp>.json          (machine-readable, same timestamp)
@@ -499,6 +500,61 @@ function Get-PackageUnits {
     return $units
 }
 
+function Find-UnsupportedFiles {
+    <#
+    .SYNOPSIS
+        Identify files in the scan root that are not supported scanner inputs.
+    .PARAMETER ScanRoot
+        Root folder being scanned. The function walks this folder recursively,
+        excluding the scanner-owned .reports directory.
+    .OUTPUTS
+        Array of PSCustomObject entries with Path, RelativePath, Extension,
+        and SizeBytes for each unsupported file.
+    #>
+    param([string]$ScanRoot)
+
+    Write-Log -Level INFO -Msg "Checking for unsupported files in: $ScanRoot"
+    $unsupported = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+    $scanRootFull = (Resolve-Path -LiteralPath $ScanRoot).Path.TrimEnd('\')
+
+    # Exclude the scanner's own report directory so re-scanning a folder does
+    # not flag prior summary, JSON, SBOM, or log artifacts as operator input.
+    $reportsRoot   = Join-Path $scanRootFull '.reports'
+    $reportsPrefix = ([System.IO.Path]::GetFullPath($reportsRoot)).TrimEnd('\') + '\'
+
+    # Reuse the same simple-extension and compound-suffix split as
+    # Get-PackageUnits so supported archives like pkg.tar.gz are not mistaken
+    # for unsupported .gz files.
+    $simpleArchiveExts    = $ARCHIVE_EXTENSIONS | Where-Object { ($_ -split '\.').Count -le 2 }
+    $compoundArchiveSuffs = $ARCHIVE_EXTENSIONS | Where-Object { ($_ -split '\.').Count -gt 2 }
+
+    foreach ($f in @(Get-ChildItem -LiteralPath $ScanRoot -Recurse -File -ErrorAction SilentlyContinue)) {
+        $fullPath = $f.FullName
+        if ($fullPath.StartsWith($reportsPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $name = $f.Name.ToLower()
+        $ext  = $f.Extension.ToLower()
+        $isArchive = ($ext -in $simpleArchiveExts) -or (@($compoundArchiveSuffs | Where-Object { $name.EndsWith($_) }).Count -gt 0)
+        $isPythonSource = $ext -in $PYTHON_SOURCE_EXTENSIONS
+
+        if (-not $isArchive -and -not $isPythonSource) {
+            $relativePath = $fullPath.Substring($scanRootFull.Length).TrimStart('\')
+            $unsupported.Add([PSCustomObject]@{
+                Path         = $fullPath
+                RelativePath = $relativePath
+                Extension    = $ext
+                SizeBytes    = [int64]$f.Length
+            })
+        }
+    }
+
+    # Sort for deterministic text and JSON output, making re-runs and tests stable.
+    return @($unsupported.ToArray() | Sort-Object RelativePath)
+}
+
 function Expand-PythonArchive {
     <#
     .SYNOPSIS
@@ -893,21 +949,27 @@ function Get-RiskLevel {
 function Write-SummaryReport {
     <#
     .SYNOPSIS
-        Generate the flat human-readable summary report for operator review.
+        Generate the flat human-readable summary report for operator review,
+        including an unsupported-files warning block when needed.
         The report is structured for non-technical review, with a clear risk
         summary at the top followed by actionable findings.
+    .PARAMETER UnsupportedFiles
+        Unsupported file entries returned by Find-UnsupportedFiles. When
+        present, they are listed near the top of the operator report.
     #>
     param(
         [string]$ReportPath,
         [array]$UnitResults,   # Array of @{Name; Kind; Findings[]}
         [string]$ScanRoot,
-        [datetime]$StartTime
+        [datetime]$StartTime,
+        [array]$UnsupportedFiles = @()
     )
 
     $endTime  = Get-Date
     $elapsed  = ($endTime - $StartTime).ToString('hh\:mm\:ss')
     $allFindings = @($UnitResults | ForEach-Object { $_.Findings } | Where-Object { $_ })
     $overallRisk = Get-RiskLevel -Findings $allFindings
+    $unsupportedList = @($UnsupportedFiles)
 
     $lines = [System.Collections.Generic.List[string]]::new()
 
@@ -928,6 +990,25 @@ function Write-SummaryReport {
         $lines.Add("  SBOM         : not produced (no declared dependencies)")
     }
     $lines.Add("")
+
+    if ($unsupportedList.Count -gt 0) {
+        $lines.Add("================================================================")
+        $lines.Add("  !! WARNING: UNSUPPORTED FILES IN SCAN ROOT")
+        $lines.Add("================================================================")
+        $lines.Add("  $($unsupportedList.Count) file(s) were found in the scan target folder that the")
+        $lines.Add("  scanner does not recognize. These were NOT analyzed. Review")
+        $lines.Add("  manually if your submission is expected to contain only")
+        $lines.Add("  Python packages or source files.")
+        $lines.Add("----------------------------------------------------------------")
+        $unsupportedIndex = 1
+        foreach ($unsupported in $unsupportedList) {
+            $lines.Add("  [$unsupportedIndex] $($unsupported.RelativePath)")
+            $unsupportedIndex++
+        }
+        $lines.Add("================================================================")
+        $lines.Add("")
+    }
+
     $lines.Add("  OVERALL RISK LEVEL: $overallRisk")
     $lines.Add("")
 
@@ -1031,12 +1112,16 @@ function Write-JsonReport {
         Absolute path to the scanned folder.
     .PARAMETER StartTime
         Datetime the scan started — used to compute elapsedSeconds.
+    .PARAMETER UnsupportedFiles
+        Unsupported file entries returned by Find-UnsupportedFiles. The JSON
+        report always includes them as unsupportedFiles, even when empty.
     #>
     param(
         [string]$ReportPath,
         [array]$UnitResults,
         [string]$ScanRoot,
-        [datetime]$StartTime
+        [datetime]$StartTime,
+        [array]$UnsupportedFiles = @()
     )
 
     $jsonPath    = [System.IO.Path]::ChangeExtension($ReportPath, '.json')
@@ -1082,9 +1167,20 @@ function Write-JsonReport {
         foreach ($s in $Script:SbomFiles) { [void]$sbomArr.Add($s) }
     }
 
+    # ArrayList avoids PS 5.1 scalar-unwrapping so unsupportedFiles is always []
+    # or an array in the machine-readable report.
+    $unsupportedArr = New-Object System.Collections.ArrayList
+    foreach ($u in @($UnsupportedFiles)) {
+        [void]$unsupportedArr.Add([PSCustomObject]@{
+            relativePath = $u.RelativePath
+            extension    = $u.Extension
+            sizeBytes    = $u.SizeBytes
+        })
+    }
+
     $report = [PSCustomObject]@{
         schemaVersion  = '1.0'
-        scannerVersion = '1.3'
+        scannerVersion = '1.4'
         scanDate       = (Get-Date).ToUniversalTime().ToString('o')
         scanRoot       = $ScanRoot
         elapsedSeconds = $elapsedSecs
@@ -1096,8 +1192,9 @@ function Write-JsonReport {
             medium   = @($allFindings | Where-Object { $_.Severity -eq 'MEDIUM' }).Count
             low      = @($allFindings | Where-Object { $_.Severity -eq 'LOW'    }).Count
         }
-        sbomFiles = $sbomArr
-        units     = $unitList.ToArray()
+        sbomFiles        = $sbomArr
+        unsupportedFiles = $unsupportedArr
+        units            = $unitList.ToArray()
     }
 
     # PS 5.1's Out-File -Encoding UTF8 writes a BOM; JSON consumers expect BOM-free UTF-8.
@@ -1196,7 +1293,7 @@ try {
 }
 
 # ----------------------------------------------------------
-# Step 5: Collect package units
+# Step 5: Collect package units and identify unsupported files
 # ----------------------------------------------------------
 
 Show-Status "Scanning folder for Python packages..."
@@ -1205,8 +1302,13 @@ Show-Status "Scanning folder for Python packages..."
 # PowerShell enumerates into the pipeline, so a single-unit result would otherwise
 # be assigned as a bare scalar and $units.Count would throw under strict mode.
 $units = @(Get-PackageUnits -ScanRoot $Path)
+$unsupportedFiles = @(Find-UnsupportedFiles -ScanRoot $Path)
 
-if ($units.Count -eq 0) {
+if ($unsupportedFiles.Count -gt 0) {
+    Write-Log -Level WARN -Msg "Found $($unsupportedFiles.Count) unsupported file(s) in scan root."
+}
+
+if ($units.Count -eq 0 -and $unsupportedFiles.Count -eq 0) {
     Write-Log -Level WARN -Msg "No Python package files found in: $Path"
     Write-Host ""
     Write-Host "  No recognizable Python files found. Supported types:" -ForegroundColor Yellow
@@ -1215,8 +1317,15 @@ if ($units.Count -eq 0) {
     exit 0
 }
 
-Write-Log -Level INFO -Msg "Units to scan: $($units.Count)"
-Show-Status "Found $($units.Count) unit(s) to scan. Starting analysis..."
+if ($units.Count -eq 0 -and $unsupportedFiles.Count -gt 0) {
+    # Unsupported-only folders still get reports so operators have a durable
+    # record of exactly which submitted files the scanner skipped.
+    Write-Log -Level WARN -Msg "No recognizable Python package files found, but unsupported files were present; generating report."
+    Show-Status "No scannable Python units found. Generating unsupported-files report..."
+} else {
+    Write-Log -Level INFO -Msg "Units to scan: $($units.Count)"
+    Show-Status "Found $($units.Count) unit(s) to scan. Starting analysis..."
+}
 
 # ----------------------------------------------------------
 # Step 6: Process each unit — extract if needed, then scan
@@ -1291,13 +1400,15 @@ Write-SummaryReport `
     -ReportPath  $reportPath `
     -UnitResults $unitResults.ToArray() `
     -ScanRoot    $Path `
-    -StartTime   $startTime
+    -StartTime   $startTime `
+    -UnsupportedFiles $unsupportedFiles
 
 Write-JsonReport `
     -ReportPath  $reportPath `
     -UnitResults $unitResults.ToArray() `
     -ScanRoot    $Path `
-    -StartTime   $startTime
+    -StartTime   $startTime `
+    -UnsupportedFiles $unsupportedFiles
 
 Write-Log -Level INFO -Msg "Scan session complete. Total units: $($unitResults.Count)."
 

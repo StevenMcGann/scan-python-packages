@@ -10,6 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Project layout migrated to git with `src/`, `tests/`, `docs/`, and `.github/workflows/`. Versioned filenames (`Scan-PythonPackages_v1_3`, `_v1_4`) replaced by a single canonical `src/Scan-PythonPackages.ps1` with version tracked via `.NOTES` and git tags.
 
+## [1.4] - 2026-04-30
+
+### Added
+
+- Unsupported-file detection pass that reports non-scannable files in text and JSON summaries.
+- `mixed\` fixture coverage and manifest `expectedUnsupportedFiles` expectations.
+- `tests\Run-Smoke.ps1` full smoke/regression harness with timestamped review artifacts.
+
+### Changed
+
+- Unsupported-only folders now produce a CLEAN report with a warning block instead of exiting without artifacts.
+- Fixture manifest schema bumped to `1.4`.
+
+### Fixed
+
+- Re-scan behavior excludes scanner-owned `.reports\` artifacts from unsupported-file warnings.
+
+### Removed
+
+- Operator visibility into skipped files removed from backlog because v1.4 implements it.
+
 ## [1.3] - 2026-04-29
 
 ### Added

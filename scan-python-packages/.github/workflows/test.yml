@@ -1,0 +1,36 @@
+name: Test
+on:
+  push:
+  pull_request:
+jobs:
+  pester-and-fixtures:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Pester 5
+        shell: powershell
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.0 -Force `
+            -SkipPublisherCheck -Scope CurrentUser
+      - name: Generate fixtures
+        run: python tests/fixtures/build_fixtures.py
+      - name: Determinism check
+        shell: powershell
+        run: |
+          $h1 = Get-ChildItem tests\fixtures\corpus -Recurse -File |
+            Sort-Object FullName | Get-FileHash | Select-Object Path,Hash
+          python tests/fixtures/build_fixtures.py
+          $h2 = Get-ChildItem tests\fixtures\corpus -Recurse -File |
+            Sort-Object FullName | Get-FileHash | Select-Object Path,Hash
+          if (Compare-Object $h1 $h2 -Property Hash) {
+            throw "Fixture corpus is not deterministic"
+          }
+      - name: Run Pester
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File tests\Run-Tests.ps1

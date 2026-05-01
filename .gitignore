@@ -1,0 +1,19 @@
+# Build artifacts and ephemeral state
+test-results/
+tests/fixtures/corpus/
+tests/fixtures/__pycache__/
+
+# Scanner runtime artifacts (would only appear if someone runs
+# the scanner from inside the repo root)
+.scan-venv/
+logs/
+.reports/
+.scan_workspace/
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
+*~

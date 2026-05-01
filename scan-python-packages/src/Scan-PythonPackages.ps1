@@ -1,20 +1,20 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Scan-PythonPackages_v1_4.ps1 — Static security scanner for submitted Python packages.
+    Scan-PythonPackages_v1_5.ps1 — Static security scanner for submitted Python packages.
 
 .DESCRIPTION
     Designed for media transfer review workflows where untrusted Python packages
     are submitted for inspection before use. This script:
 
-      1. Checks and installs required scanning tools (Bandit, pip-audit, detect-secrets).
+      1. Checks and installs required scanning tools (Bandit, pip-audit, detect-secrets, pefile, pyelftools).
       2. Prompts the operator for a folder containing Python packages to scan.
       3. Extracts archives (.whl, .egg, .zip, .tar.gz, .tgz) into a staging workspace.
       4. Scans all Python source code for:
            - Risky code patterns (Bandit)
            - Hardcoded secrets / credentials (detect-secrets)
            - Known CVE vulnerabilities in dependencies (pip-audit)
-           - Presence of native binaries (.pyd, .so, .dll)
+           - Native binary triage (.pyd, .so, .dll)
       5. Surfaces unsupported files in the scan root so operators can review skipped content.
       6. Writes a flat human-readable summary report for operator review.
       7. Writes a timestamped run log for troubleshooting and audit purposes.
@@ -31,7 +31,7 @@
 
 .NOTES
     Author      : Generated for media transfer security review workflow
-    Version     : 1.4
+    Version     : 1.5
     Requires    : PowerShell 5.1+, Python 3.x (with pip), internet access for tool install
     Output      : <scan-root>\.reports\summary_<timestamp>.txt           (operator report)
                   <scan-root>\.reports\summary_<timestamp>.json          (machine-readable, same timestamp)
@@ -63,7 +63,9 @@ $ErrorActionPreference = 'Stop'
 $SCANNER_PACKAGES = @(
     'bandit',
     'pip-audit',
-    'detect-secrets'
+    'detect-secrets',
+    'pefile',
+    'pyelftools'
 )
 
 # Minimum acceptable versions (empty string = no version check)
@@ -71,6 +73,8 @@ $SCANNER_MIN_VERSIONS = @{
     'bandit'         = '1.7.0'
     'pip-audit'      = '2.0.0'
     'detect-secrets' = '1.4.0'
+    'pefile'         = '2023.2.7'
+    'pyelftools'     = '0.29'
 }
 
 # File extensions treated as extractable archives
@@ -895,37 +899,82 @@ function Invoke-PipAuditScan {
     }
 }
 
-function Find-NativeBinaries {
+function Invoke-BinaryInspection {
     <#
     .SYNOPSIS
-        Detect native compiled binaries (.pyd, .so, .dll) inside a package.
-        These cannot be statically analyzed by Python tools and require
-        deeper manual or binary-level review.
+        Inspect native compiled binaries (.pyd, .so, .dll) inside a package.
+        The Python helper performs static triage of PE/ELF format validity,
+        imports, signatures, and section entropy.
     .OUTPUTS
         Parsed finding objects, or empty array.
     #>
-    param([string]$TargetPath)
+    param(
+        [string]$ScriptsDir,
+        [string]$TargetPath,
+        [string]$PythonExe = ''
+    )
 
-    Write-Log -Level INFO -Msg "Checking for native binaries in: $TargetPath"
+    if (-not $PythonExe) {
+        $PythonExe = Join-Path $ScriptsDir 'python.exe'
+    }
+
+    if (-not (Test-Path -LiteralPath $PythonExe)) {
+        Write-Log -Level WARN -Msg "Binary inspection Python not available — skipping native binary triage."
+        return @()
+    }
+
+    $inspector = Join-Path $PSScriptRoot 'inspect_binary.py'
+    if (-not (Test-Path -LiteralPath $inspector)) {
+        Write-Log -Level WARN -Msg "Binary inspection helper not found at $inspector — skipping native binary triage."
+        return @()
+    }
+
+    Write-Log -Level INFO -Msg "Inspecting native binaries in: $TargetPath"
 
     $natives = Get-ChildItem -LiteralPath $TargetPath -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension.ToLower() -in @('.pyd', '.so', '.dll') }
 
     $findings = @()
     foreach ($n in $natives) {
-        $findings += [PSCustomObject]@{
-            Tool      = 'NativeBinaryCheck'
-            Severity  = 'MEDIUM'
-            Confidence= 'HIGH'
-            File      = $n.FullName
-            Line      = 0
-            Issue     = "Native binary detected ($($n.Extension)). Cannot be statically analyzed — requires manual or binary-level review."
-            TestID    = 'NATIVE-BINARY'
+        $binaryPath = $n.FullName
+        $tmpJson = Join-Path $env:TEMP "binary_$([IO.Path]::GetRandomFileName()).json"
+        try {
+            $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            $inspectOut = & $PythonExe $inspector $binaryPath $tmpJson 2>&1
+            $exitCode = $LASTEXITCODE
+            $ErrorActionPreference = $prevEAP
+            foreach ($line in $inspectOut) { Write-Log -Level DEBUG -Msg "binary-inspect: $([string]$line)" }
+
+            if ($exitCode -ne 0) {
+                Write-Log -Level WARN -Msg "Binary inspection failed for $binaryPath with exit code $exitCode."
+                continue
+            }
+
+            if (-not (Test-Path -LiteralPath $tmpJson)) {
+                Write-Log -Level WARN -Msg "Binary inspection produced no output file for $binaryPath."
+                continue
+            }
+
+            $raw = Get-Content -LiteralPath $tmpJson -Raw | ConvertFrom-Json
+            foreach ($finding in @($raw.findings)) {
+                $findings += [PSCustomObject]@{
+                    Tool       = 'BinaryInspection'
+                    Severity   = $finding.severity
+                    Confidence = $finding.confidence
+                    File       = $binaryPath
+                    Line       = 0
+                    Issue      = $finding.issue
+                    TestID     = $finding.testId
+                }
+            }
+        } catch {
+            Write-Log -Level WARN -Msg "Binary inspection error for ${binaryPath}: $_"
+        } finally {
+            Remove-Item -LiteralPath $tmpJson -Force -ErrorAction SilentlyContinue
         }
-        Write-Log -Level WARN -Msg "Native binary found: $($n.FullName)"
     }
 
-    Write-Log -Level INFO -Msg "Native binary check: $($findings.Count) file(s) found."
+    Write-Log -Level INFO -Msg "Binary inspection: $($findings.Count) finding(s)."
     return $findings
 }
 
@@ -1083,7 +1132,7 @@ function Write-SummaryReport {
     $lines.Add("  Bandit          : Code pattern analysis (eval, pickle, subprocess, weak crypto)")
     $lines.Add("  detect-secrets  : Hardcoded secrets, tokens, API keys, credentials")
     $lines.Add("  pip-audit       : Dependency CVE check against PyPI Advisory Database")
-    $lines.Add("  NativeBinaryChk : Presence of compiled native extensions (.pyd/.so/.dll)")
+    $lines.Add("  BinaryInspect : Native binary triage (format validation, imports, entropy, signatures)")
     $lines.Add("")
     $lines.Add("  NOTE: This report is based on STATIC analysis only.")
     $lines.Add("        No package code was executed during this scan.")
@@ -1180,7 +1229,7 @@ function Write-JsonReport {
 
     $report = [PSCustomObject]@{
         schemaVersion  = '1.0'
-        scannerVersion = '1.4'
+        scannerVersion = '1.5'
         scanDate       = (Get-Date).ToUniversalTime().ToString('o')
         scanRoot       = $ScanRoot
         elapsedSeconds = $elapsedSecs
@@ -1366,7 +1415,7 @@ foreach ($unit in $units) {
         foreach ($f in (Invoke-BanditScan       -ScriptsDir $venv.Scripts -TargetPath $scanTarget)) { $findings.Add($f) }
         foreach ($f in (Invoke-DetectSecretsScan -ScriptsDir $venv.Scripts -TargetPath $scanTarget)) { $findings.Add($f) }
 
-        # CVE audit/SBOM require package metadata; native binary checks are useful
+        # CVE audit/SBOM require package metadata; binary inspection is useful
         # for any extracted archive.
         if ($unit.Kind -eq 'archive') {
             # Derive a SBOM filename by stripping the archive extension from $safeName then
@@ -1374,7 +1423,7 @@ foreach ($unit in $units) {
             $sbomSuffix   = $safeName -replace '\.tar\.gz$|\.whl$|\.egg$|\.zip$|\.tgz$', ''
             $unitSbomPath = Join-Path $reportsDir "sbom_${timestamp}_${sbomSuffix}.cdx.json"
             foreach ($f in (Invoke-PipAuditScan -ScriptsDir $venv.Scripts -TargetPath $scanTarget -SbomPath $unitSbomPath)) { $findings.Add($f) }
-            foreach ($f in (Find-NativeBinaries  -TargetPath $scanTarget)) { $findings.Add($f) }
+            foreach ($f in (Invoke-BinaryInspection -ScriptsDir $venv.Scripts -TargetPath $scanTarget -PythonExe $venv.Python)) { $findings.Add($f) }
         }
 
     } catch {

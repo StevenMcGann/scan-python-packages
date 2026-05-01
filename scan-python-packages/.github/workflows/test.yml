@@ -18,6 +18,8 @@ jobs:
             -SkipPublisherCheck -Scope CurrentUser
       - name: Generate fixtures
         run: python tests/fixtures/build_fixtures.py
+      - name: Install binary inspection test dependencies
+        run: python -m pip install pefile pyelftools
       - name: Determinism check
         shell: powershell
         run: |

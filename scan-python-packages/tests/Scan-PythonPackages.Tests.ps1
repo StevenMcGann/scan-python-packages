@@ -275,7 +275,7 @@ Describe 'Get-PackageUnits archive-extension classification' {
 }
 
 # ============================================================
-# Fixture corpus manifest (v1.4 scanner-output contract)
+# Fixture corpus manifest (v1.5 scanner-output contract)
 # ============================================================
 
 Describe 'Fixture corpus manifest' {
@@ -287,9 +287,9 @@ Describe 'Fixture corpus manifest' {
         $script:FixtureManifest = Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
     }
 
-    It 'Uses schemaVersion 1.4 for scanner v1.4' {
-        $script:FixtureManifest.schemaVersion | Should -Be '1.4'
-        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.4'
+    It 'Uses schemaVersion 1.5 for scanner v1.5' {
+        $script:FixtureManifest.schemaVersion | Should -Be '1.5'
+        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.5'
     }
 
     It 'Contains the required corpus directories' {
@@ -299,7 +299,7 @@ Describe 'Fixture corpus manifest' {
     }
 
     It 'Declares every generated fixture path and every path exists' {
-        @($script:FixtureManifest.fixtures).Count | Should -Be 27
+        @($script:FixtureManifest.fixtures).Count | Should -Be 31
 
         foreach ($fixture in $script:FixtureManifest.fixtures) {
             $fixture.path | Should -Not -BeNullOrEmpty
@@ -354,7 +354,7 @@ Describe 'Fixture corpus manifest' {
         $tools | Should -Contain 'Bandit'
         $tools | Should -Contain 'detect-secrets'
         $tools | Should -Contain 'pip-audit'
-        $tools | Should -Contain 'NativeBinaryCheck'
+        $tools | Should -Contain 'BinaryInspection'
     }
 
     It 'Represents version-dependent weak-crypto Bandit IDs as an either-or expectation' {
@@ -380,6 +380,92 @@ Describe 'Fixture corpus manifest' {
         @($mixed.expectedUnsupportedFiles) | Should -Contain 'photo.jpg'
         $nonPython.expectsJson | Should -BeTrue
         $mixed.expectsJson | Should -BeTrue
+    }
+}
+
+# ============================================================
+# Invoke-BinaryInspection
+# ============================================================
+
+Describe 'Invoke-BinaryInspection' {
+
+    BeforeAll {
+        $script:BinaryRealPython = $null
+        foreach ($candidate in @('py', 'python', 'python3')) {
+            try {
+                Get-Command $candidate -ErrorAction Stop | Out-Null
+                $ver = & $candidate --version 2>&1
+                if ($ver -match 'Python 3\.') {
+                    $script:BinaryRealPython = $candidate
+                    break
+                }
+            } catch { }
+        }
+
+        if ($script:BinaryRealPython) {
+            $script:BinaryVenvDir = Join-Path $TestDrive 'binary-venv'
+            $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            & $script:BinaryRealPython -m venv $script:BinaryVenvDir 2>&1 | Out-Null
+            $script:BinaryVenvPython = Join-Path $script:BinaryVenvDir 'Scripts\python.exe'
+            & $script:BinaryVenvPython -m pip install --quiet pefile pyelftools 2>&1 | Out-Null
+            $ErrorActionPreference = $prevEAP
+            $script:BinaryVenvScripts = Join-Path $script:BinaryVenvDir 'Scripts'
+        }
+
+        $script:ExpandBinaryTestWheel = {
+            param(
+                [string]$WheelName,
+                [string]$OutputName
+            )
+            $archive = Join-Path $PSScriptRoot "fixtures\corpus\archives\$WheelName"
+            $dest = Join-Path $TestDrive $OutputName
+            $zipCopy = Join-Path $TestDrive "$OutputName.zip"
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Copy-Item -LiteralPath $archive -Destination $zipCopy -Force
+            Expand-Archive -LiteralPath $zipCopy -DestinationPath $dest -Force
+            return $dest
+        }
+    }
+
+    BeforeEach {
+        if (-not $script:BinaryRealPython) { Set-ItResult -Skipped -Because 'Python 3 not found on PATH' }
+    }
+
+    It 'Returns no findings for a valid PE with no suspicious imports' {
+        $target = & $script:ExpandBinaryTestWheel -WheelName 'native_pyd_pkg-1.0-py3-none-any.whl' -OutputName 'native-pyd'
+
+        $findings = @(Invoke-BinaryInspection -ScriptsDir $script:BinaryVenvScripts -TargetPath $target -PythonExe $script:BinaryVenvPython)
+
+        $findings.Count | Should -Be 0
+    }
+
+    It 'Reports HIGH findings for suspicious PE imports' {
+        $target = & $script:ExpandBinaryTestWheel -WheelName 'suspicious_imports_pkg-1.0-py3-none-any.whl' -OutputName 'suspicious-imports'
+
+        $findings = @(Invoke-BinaryInspection -ScriptsDir $script:BinaryVenvScripts -TargetPath $target -PythonExe $script:BinaryVenvPython)
+
+        $findings.Count | Should -BeGreaterThan 0
+        @($findings | Where-Object { $_.TestID -eq 'BINARY-SUSPICIOUS-IMPORT' -and $_.Severity -eq 'HIGH' }).Count |
+            Should -BeGreaterOrEqual 1
+    }
+
+    It 'Reports HIGH findings for invalid native binary format' {
+        $target = & $script:ExpandBinaryTestWheel -WheelName 'fake_native_pkg-1.0-py3-none-any.whl' -OutputName 'fake-native'
+
+        $findings = @(Invoke-BinaryInspection -ScriptsDir $script:BinaryVenvScripts -TargetPath $target -PythonExe $script:BinaryVenvPython)
+
+        $findings.Count | Should -BeGreaterThan 0
+        @($findings | Where-Object { $_.TestID -eq 'BINARY-INVALID-FORMAT' -and $_.Severity -eq 'HIGH' }).Count |
+            Should -Be 1
+    }
+
+    It 'Gracefully degrades when the inspection script path is unavailable' {
+        $target = & $script:ExpandBinaryTestWheel -WheelName 'native_pyd_pkg-1.0-py3-none-any.whl' -OutputName 'missing-script'
+        $missingScripts = Join-Path $TestDrive 'missing-scripts'
+
+        $findings = @(Invoke-BinaryInspection -ScriptsDir $missingScripts -TargetPath $target)
+
+        $findings.Count | Should -Be 0
     }
 }
 

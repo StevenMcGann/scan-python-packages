@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Triage-level binary inspection for `.pyd`, `.so`, and `.dll` artifacts using `pefile` and `pyelftools`. The scanner now analyzes format validity, digital signatures, import tables, and section entropy.
+
 ### Changed
 
 - Project layout migrated to git with `src/`, `tests/`, `docs/`, and `.github/workflows/`. Versioned filenames (`Scan-PythonPackages_v1_3`, `_v1_4`) replaced by a single canonical `src/Scan-PythonPackages.ps1` with version tracked via `.NOTES` and git tags.
+- `Find-NativeBinaries` replaced by `Invoke-BinaryInspection`. Native binaries now produce specific, actionable findings instead of generic presence warnings. Tool name in findings changed from `NativeBinaryCheck` to `BinaryInspection`.
+- `$SCANNER_PACKAGES` expanded with `pefile` and `pyelftools` dependencies.
 
 ## [1.4] - 2026-04-30
 

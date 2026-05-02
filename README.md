@@ -4,7 +4,7 @@
 
 ## What This Is
 
-- A static-analysis wrapper around Bandit, detect-secrets, pip-audit, and a native-binary presence check.
+- A static-analysis wrapper around Bandit, detect-secrets, pip-audit, and native binary inspection (PE/ELF triage).
 - An operator-host tool: reviewers run it against a submission folder and keep the generated report with that submission.
 - A developer-host project: maintainers can regenerate deterministic fixtures, run Pester tests, and run smoke checks before cutting a release.
 
@@ -51,12 +51,12 @@ python tests\fixtures\build_fixtures.py
 
 ## Documentation
 
-- Current release notes: [docs/release-notes/v1.4.md](docs/release-notes/v1.4.md)
+- Current release notes: [docs/release-notes/v1.5.md](docs/release-notes/v1.5.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## Versioning And Releases
 
-The scanner version is set in the `.NOTES` block of `src\Scan-PythonPackages.ps1`, marked with an annotated git tag such as `v1.4`, and shipped through a GitHub Release. Future backlog items should be developed on feature branches and merged into the canonical file instead of creating new version-suffixed script filenames.
+The scanner version is set in the `.NOTES` block of `src\Scan-PythonPackages.ps1`, marked with an annotated git tag such as `v1.5`, and shipped through a GitHub Release. Future backlog items should be developed on feature branches and merged into the canonical file instead of creating new version-suffixed script filenames.
 
 ## License
 

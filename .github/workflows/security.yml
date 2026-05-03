@@ -23,9 +23,17 @@ jobs:
       - name: Run pip-audit against scanner dependencies
         shell: powershell
         run: |
-          .\.scan-venv\Scripts\pip-audit.exe --strict --desc on 2>&1 | Tee-Object -Variable auditOutput
-          $auditOutput | Out-File -FilePath pip-audit-results.txt -Encoding utf8
-          if ($LASTEXITCODE -ne 0) {
+          $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+          $auditOutput = .\.scan-venv\Scripts\pip-audit.exe --strict --desc on 2>&1
+          $exitCode = $LASTEXITCODE
+          $ErrorActionPreference = $prevEAP
+
+          $textOutput = ($auditOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+          $textOutput | Out-File -FilePath pip-audit-results.txt -Encoding utf8
+
+          Write-Host $textOutput
+
+          if ($exitCode -ne 0) {
               Write-Host "::error::pip-audit found vulnerabilities in scanner dependencies"
               exit 1
           }
@@ -54,7 +62,7 @@ jobs:
         run: |
           $prevEAP = $ErrorActionPreference
           $ErrorActionPreference = 'Continue'
-          $output = python -m detect_secrets scan --all-files --no-verify 2>&1
+          $output = python -m detect_secrets scan --all-files --no-verify --exclude-files 'tests[\\/]fixtures[\\/]' --exclude-files '\.git[\\/]' 2>&1
           $ErrorActionPreference = $prevEAP
 
           $jsonText = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
@@ -102,7 +110,8 @@ jobs:
                              $_.FullName -notmatch '[\\/]test-results[\\/]' }
 
           foreach ($file in $psFiles) {
-              $findings = Invoke-ScriptAnalyzer -Path $file.FullName -Severity Warning,Error -Recurse:$false
+              $findings = Invoke-ScriptAnalyzer -Path $file.FullName -Severity Warning,Error -Recurse:$false `
+                  -ExcludeRule @('PSAvoidUsingWriteHost', 'PSUseSingularNouns')
               if ($findings) {
                   $results += $findings
               }

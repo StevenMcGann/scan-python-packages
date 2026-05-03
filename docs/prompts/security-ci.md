@@ -45,7 +45,7 @@ on:
 3. **Create scanner venv and install dependencies** — shell: `powershell`
    ```powershell
    python -m venv .scan-venv
-   .\.scan-venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.scan-venv\Scripts\python.exe -m pip install --upgrade pip setuptools
    .\.scan-venv\Scripts\python.exe -m pip install bandit pip-audit detect-secrets pefile pyelftools
    ```
 

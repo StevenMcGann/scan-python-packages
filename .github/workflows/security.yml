@@ -9,9 +9,9 @@ jobs:
   dependency-audit:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Create scanner venv and install dependencies
@@ -39,7 +39,7 @@ jobs:
           }
       - name: Upload pip-audit results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pip-audit-results
           path: pip-audit-results.txt
@@ -48,9 +48,9 @@ jobs:
   secret-scan:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install detect-secrets
@@ -87,7 +87,7 @@ jobs:
           }
       - name: Upload detect-secrets results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: detect-secrets-results
           path: detect-secrets-results.json
@@ -96,7 +96,7 @@ jobs:
   powershell-analysis:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install PSScriptAnalyzer
         shell: powershell
         run: |
@@ -145,7 +145,7 @@ jobs:
           }
       - name: Upload PSScriptAnalyzer results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: psscriptanalyzer-results
           path: psscriptanalyzer-results.json
@@ -154,9 +154,9 @@ jobs:
   python-analysis:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install Bandit
@@ -220,7 +220,7 @@ jobs:
           }
       - name: Upload Bandit results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bandit-results
           path: bandit-results.json

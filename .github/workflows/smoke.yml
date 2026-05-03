@@ -8,9 +8,9 @@ jobs:
   smoke-suite:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install Pester 5
@@ -27,7 +27,7 @@ jobs:
             -File tests\Run-Smoke.ps1
       - name: Upload smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: smoke-results
           path: test-results/

@@ -11,7 +11,7 @@ The project already has two CI workflows:
 - `.github/workflows/test.yml` — runs Pester tests on push/PR (Windows runner, Python 3.11)
 - `.github/workflows/smoke.yml` — runs the full smoke suite nightly at 06:00 UTC (Windows runner, Python 3.11)
 
-Both use `actions/checkout@v4` and `actions/setup-python@v5`.
+Both use `actions/checkout@v6` and `actions/setup-python@v6`.
 
 ## What to Create
 
@@ -38,9 +38,9 @@ on:
 
 **Steps (in this exact order):**
 
-1. **Checkout** — `actions/checkout@v4`
+1. **Checkout** — `actions/checkout@v6`
 
-2. **Set up Python** — `actions/setup-python@v5` with `python-version: '3.11'`
+2. **Set up Python** — `actions/setup-python@v6` with `python-version: '3.11'`
 
 3. **Create scanner venv and install dependencies** — shell: `powershell`
    ```powershell
@@ -68,7 +68,7 @@ on:
    ```
    **Important:** The `$ErrorActionPreference` save/restore pattern is required for PowerShell 5.1 compatibility when capturing native command stderr with `2>&1`. Without it, PS 5.1 wraps stderr lines as `NativeCommandError` objects, which can cause the step to fail before reaching the exit-code check.
 
-5. **Upload pip-audit results** — `actions/upload-artifact@v4`, condition: `if: always()`
+5. **Upload pip-audit results** — `actions/upload-artifact@v6`, condition: `if: always()`
    ```yaml
    with:
      name: pip-audit-results
@@ -84,9 +84,9 @@ on:
 
 **Steps (in this exact order):**
 
-1. **Checkout** — `actions/checkout@v4`
+1. **Checkout** — `actions/checkout@v6`
 
-2. **Set up Python** — `actions/setup-python@v5` with `python-version: '3.11'`
+2. **Set up Python** — `actions/setup-python@v6` with `python-version: '3.11'`
 
 3. **Install detect-secrets** — shell: `powershell`
    ```powershell
@@ -123,7 +123,7 @@ on:
    ```
    **Important:** This step must NOT fail the workflow. Secret detection has a high false-positive rate (test fixtures contain intentional fake secrets). The step writes GitHub Actions warning annotations so findings are visible in the workflow summary, but the exit code is always 0.
 
-5. **Upload detect-secrets results** — `actions/upload-artifact@v4`, condition: `if: always()`
+5. **Upload detect-secrets results** — `actions/upload-artifact@v6`, condition: `if: always()`
    ```yaml
    with:
      name: detect-secrets-results
@@ -139,7 +139,7 @@ on:
 
 **Steps (in this exact order):**
 
-1. **Checkout** — `actions/checkout@v4`
+1. **Checkout** — `actions/checkout@v6`
 
 2. **Install PSScriptAnalyzer** — shell: `powershell`
    ```powershell
@@ -189,7 +189,7 @@ on:
    }
    ```
 
-4. **Upload PSScriptAnalyzer results** — `actions/upload-artifact@v4`, condition: `if: always()`
+4. **Upload PSScriptAnalyzer results** — `actions/upload-artifact@v6`, condition: `if: always()`
    ```yaml
    with:
      name: psscriptanalyzer-results
@@ -205,9 +205,9 @@ on:
 
 **Steps (in this exact order):**
 
-1. **Checkout** — `actions/checkout@v4`
+1. **Checkout** — `actions/checkout@v6`
 
-2. **Set up Python** — `actions/setup-python@v5` with `python-version: '3.11'`
+2. **Set up Python** — `actions/setup-python@v6` with `python-version: '3.11'`
 
 3. **Install Bandit** — shell: `powershell`
    ```powershell
@@ -270,7 +270,7 @@ on:
    }
    ```
 
-5. **Upload Bandit results** — `actions/upload-artifact@v4`, condition: `if: always()`
+5. **Upload Bandit results** — `actions/upload-artifact@v6`, condition: `if: always()`
    ```yaml
    with:
      name: bandit-results

@@ -51,7 +51,7 @@ python tests\fixtures\build_fixtures.py
 
 ## Documentation
 
-- Current release notes: [docs/release-notes/v1.5.md](docs/release-notes/v1.5.md)
+- Current feature release notes: [docs/release-notes/v1.5.md](docs/release-notes/v1.5.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## Versioning And Releases

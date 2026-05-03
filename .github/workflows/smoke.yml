@@ -4,6 +4,10 @@ on:
   schedule:
     # Nightly at 06:00 UTC
     - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+
 jobs:
   smoke-suite:
     runs-on: windows-latest
@@ -25,6 +29,26 @@ jobs:
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File tests\Run-Smoke.ps1
+      - name: Publish smoke summary
+        if: always()
+        shell: powershell
+        run: |
+          $latest = Get-ChildItem -Path test-results -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+
+          if ($latest) {
+              $indexPath = Join-Path $latest.FullName 'INDEX.md'
+              if (Test-Path $indexPath) {
+                  Get-Content $indexPath | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              } else {
+                  "Smoke run completed, but INDEX.md was not found in $($latest.FullName)." |
+                    Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              }
+          } else {
+              "No smoke result directory was created." |
+                Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
       - name: Upload smoke artifacts
         if: always()
         uses: actions/upload-artifact@v6

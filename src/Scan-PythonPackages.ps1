@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Scan-PythonPackages_v1_5.ps1 — Static security scanner for submitted Python packages.
+    Scan-PythonPackages.ps1 - Static security scanner for submitted Python packages.
 
 .DESCRIPTION
     Designed for media transfer review workflows where untrusted Python packages
@@ -31,7 +31,7 @@
 
 .NOTES
     Author      : Generated for media transfer security review workflow
-    Version     : 1.5
+    Version     : 1.5.1
     Requires    : PowerShell 5.1+, Python 3.x (with pip), internet access for tool install
     Output      : <scan-root>\.reports\summary_<timestamp>.txt           (operator report)
                   <scan-root>\.reports\summary_<timestamp>.json          (machine-readable, same timestamp)
@@ -403,11 +403,21 @@ function Install-ScannerDependencies {
 
     Write-Log -Level INFO -Msg "Upgrading pip/setuptools/wheel in scanner venv..."
     Show-Status "Updating pip..."
-    # PS 5.1: set Continue so pip's stderr warnings (via 2>&1) don't trigger Stop
+    # Use python -m pip for bootstrap upgrades because pip refuses to
+    # replace itself when launched through the generated pip.exe wrapper.
+    $upgradeOut = @()
+    $upgradeExit = 0
     $prevEAP = $ErrorActionPreference ; $ErrorActionPreference = 'Continue'
-    $upgradeOut = & $PipExe install --upgrade pip setuptools wheel 2>&1
-    $ErrorActionPreference = $prevEAP
+    try {
+        $upgradeOut = & $PythonExe -m pip install --upgrade pip setuptools wheel 2>&1
+        $upgradeExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
     foreach ($line in $upgradeOut) { Write-Log -Level DEBUG -Msg ([string]$line) }
+    if ($upgradeExit -ne 0) {
+        Write-Log -Level WARN -Msg "Bootstrap package upgrade exited with code $upgradeExit; continuing with per-tool verification."
+    }
 
     foreach ($pkg in $SCANNER_PACKAGES) {
         $installedVer = Get-InstalledPackageVersion -PipExe $PipExe -PackageName $pkg
@@ -434,8 +444,11 @@ function Install-ScannerDependencies {
                 try {
                     # PS 5.1: Continue prevents pip's stderr warnings from falsely terminating
                     $prevEAP = $ErrorActionPreference ; $ErrorActionPreference = 'Continue'
-                    $installOut = & $PipExe install --upgrade $pkg 2>&1
-                    $ErrorActionPreference = $prevEAP
+                    try {
+                        $installOut = & $PythonExe -m pip install --upgrade $pkg 2>&1
+                    } finally {
+                        $ErrorActionPreference = $prevEAP
+                    }
                     foreach ($line in $installOut) { Write-Log -Level DEBUG -Msg ([string]$line) }
                 } catch {
                     Write-Log -Level WARN -Msg "pip emitted errors during install of ${pkg}: $_"
@@ -1229,7 +1242,7 @@ function Write-JsonReport {
 
     $report = [PSCustomObject]@{
         schemaVersion  = '1.0'
-        scannerVersion = '1.5'
+        scannerVersion = '1.5.1'
         scanDate       = (Get-Date).ToUniversalTime().ToString('o')
         scanRoot       = $ScanRoot
         elapsedSeconds = $elapsedSecs

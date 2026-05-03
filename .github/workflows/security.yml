@@ -5,6 +5,9 @@ on:
     # Nightly at 07:00 UTC (one hour after smoke suite)
     - cron: '0 7 * * *'
 
+permissions:
+  contents: read
+
 jobs:
   dependency-audit:
     runs-on: windows-latest
@@ -80,7 +83,7 @@ jobs:
                       Write-Host "::warning file=$filePath,line=$($finding.line_number)::$($finding.type)"
                   }
               }
-              # Exit 0 — secrets are warnings, not failures, to avoid false positives
+              # Exit 0 - secrets are warnings, not failures, to avoid false positives
               # blocking the pipeline. Review the uploaded artifact.
           } else {
               Write-Host "No secrets detected."
@@ -212,7 +215,7 @@ jobs:
                       Write-Host "::warning file=$($r.filename),line=$($r.line_number)::[$($r.test_id)] $($r.issue_text) (severity: $($r.issue_severity), confidence: $($r.issue_confidence))"
                   }
               }
-              # Warning only — do not fail the workflow.
+              # Warning only - do not fail the workflow.
               # Bandit exits non-zero when it finds any issues, even LOW/LOW.
               exit 0
           } else {

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-05-03
+
+### Changed
+
+- Added explicit read-only GitHub Actions token permissions to CI workflows.
+- Published nightly smoke `INDEX.md` content into the GitHub Actions job summary so results can be reviewed without downloading artifacts.
+- Bumped scanner patch version to `1.5.1` for the cleanup release.
+
+### Fixed
+
+- Removed generated Python bytecode from source control and ignored future `__pycache__` / `.pyc` artifacts.
+- Corrected the canonical scanner synopsis to use `Scan-PythonPackages.ps1` instead of a version-suffixed filename.
+- Made scanner venv bootstrap upgrades use `python -m pip` so pip/setuptools/wheel updates are not rejected by the `pip.exe` wrapper.
+
 ## [1.5] - 2026-05-01
 
 ### Added

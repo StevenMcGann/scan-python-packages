@@ -2,6 +2,8 @@
 test-results/
 tests/fixtures/corpus/
 tests/fixtures/__pycache__/
+__pycache__/
+*.pyc
 
 # Scanner runtime artifacts (would only appear if someone runs
 # the scanner from inside the repo root)

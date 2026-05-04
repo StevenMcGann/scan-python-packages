@@ -31,7 +31,7 @@
 
 .NOTES
     Author      : Generated for media transfer security review workflow
-    Version     : 1.5.1
+    Version     : 1.5.2
     Requires    : PowerShell 5.1+, Python 3.x (with pip), internet access for tool install
     Output      : <scan-root>\.reports\summary_<timestamp>.txt           (operator report)
                   <scan-root>\.reports\summary_<timestamp>.json          (machine-readable, same timestamp)
@@ -1242,7 +1242,7 @@ function Write-JsonReport {
 
     $report = [PSCustomObject]@{
         schemaVersion  = '1.0'
-        scannerVersion = '1.5.1'
+        scannerVersion = '1.5.2'
         scanDate       = (Get-Date).ToUniversalTime().ToString('o')
         scanRoot       = $ScanRoot
         elapsedSeconds = $elapsedSecs

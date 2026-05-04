@@ -29,8 +29,8 @@ The manifest schema is versioned. The current `manifest.json` uses:
 ```json
 {
   "schemaVersion": "1.5",
-  "scannerVersionTarget": "1.5.1"
+  "scannerVersionTarget": "1.5.2"
 }
 ```
 
-Pester tests assert this schema version when loading the manifest. Fixture entries include expected text findings, JSON-summary expectations, SBOM presence/component-count expectations, binary-inspection expectations, and optional `expectedUnsupportedFiles` arrays for v1.5.1 scanner expectations.
+Pester tests assert this schema version when loading the manifest. Fixture entries include expected text findings, JSON-summary expectations, SBOM presence/component-count expectations, binary-inspection expectations, and optional `expectedUnsupportedFiles` arrays for v1.5.2 scanner expectations.

@@ -499,7 +499,7 @@ def build() -> list[dict[str, object]]:
 
     manifest = {
         "schemaVersion": "1.5",
-        "scannerVersionTarget": "1.5.1",
+        "scannerVersionTarget": "1.5.2",
         "fixtures": fixtures,
     }
     write_file(CORPUS_ROOT / "manifest.json", text_bytes(json.dumps(manifest, indent=2, sort_keys=True) + "\n"))

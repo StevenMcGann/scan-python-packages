@@ -16,20 +16,31 @@
 
 ## Operator Quickstart
 
+Download the GitHub Release zip for the current version and extract it to a writable tools folder. The runtime package must contain both files below in the same directory:
+
+```text
+Scan-PythonPackages.ps1
+inspect_binary.py
+```
+
+`inspect_binary.py` is required for v1.5+ native binary inspection. If it is missing, the scanner still runs, but PE/ELF binary triage is skipped and the log contains `Binary inspection helper not found`.
+
 From a Windows PowerShell 5.1 prompt:
 
 ```powershell
-# Interactive: prompts for a submission folder
-.\src\Scan-PythonPackages.ps1
+# Interactive release-package usage: prompts for a submission folder
+.\Scan-PythonPackages.ps1
 
-# Non-interactive: scan a specific folder
-.\src\Scan-PythonPackages.ps1 -Path "D:\incoming\submission_2026-04-30"
+# Non-interactive release-package usage: scan a specific folder
+.\Scan-PythonPackages.ps1 -Path "D:\incoming\submission_2026-04-30"
 
-# Unattended: install missing scanner tools without prompting
-.\src\Scan-PythonPackages.ps1 -Path "D:\incoming\submission_2026-04-30" -AutoInstall
+# Unattended release-package usage: install missing scanner tools without prompting
+.\Scan-PythonPackages.ps1 -Path "D:\incoming\submission_2026-04-30" -AutoInstall
 ```
 
-Reports are written to the scanned folder's `.reports\` directory. Runtime logs and the scanner virtual environment live beside the repository root when the script is run from this checkout.
+When running from a developer checkout instead of the release zip, use `.\src\Scan-PythonPackages.ps1`; the required helper is already beside it at `.\src\inspect_binary.py`.
+
+Reports are written to the scanned folder's `.reports\` directory. Runtime logs and the scanner virtual environment live beside the script directory.
 
 ## Developer Quickstart
 
@@ -51,7 +62,7 @@ python tests\fixtures\build_fixtures.py
 
 ## Documentation
 
-- Current feature release notes: [docs/release-notes/v1.5.md](docs/release-notes/v1.5.md)
+- Current release notes and operator documentation: [docs/release-notes/v1.5.2.md](docs/release-notes/v1.5.2.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## Versioning And Releases

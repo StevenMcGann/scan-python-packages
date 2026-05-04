@@ -275,7 +275,7 @@ Describe 'Get-PackageUnits archive-extension classification' {
 }
 
 # ============================================================
-# Fixture corpus manifest (v1.5 schema, v1.5.1 scanner-output contract)
+# Fixture corpus manifest (v1.5 schema, v1.5.2 scanner-output contract)
 # ============================================================
 
 Describe 'Fixture corpus manifest' {
@@ -287,9 +287,9 @@ Describe 'Fixture corpus manifest' {
         $script:FixtureManifest = Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
     }
 
-    It 'Uses schemaVersion 1.5 for scanner v1.5.1' {
+    It 'Uses schemaVersion 1.5 for scanner v1.5.2' {
         $script:FixtureManifest.schemaVersion | Should -Be '1.5'
-        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.5.1'
+        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.5.2'
     }
 
     It 'Contains the required corpus directories' {

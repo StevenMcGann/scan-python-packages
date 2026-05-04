@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-05-03
+
+### Changed
+
+- Documented the v1.5+ runtime package layout: `Scan-PythonPackages.ps1` and `inspect_binary.py` must be distributed together in the same directory.
+- Restored release-note/operator-documentation detail about package contents, install layout, binary-inspection prerequisites, troubleshooting, and release zip usage.
+- Updated release packaging expectation from a single script asset to a zip containing both required runtime files.
+
+### Fixed
+
+- Prevented operators from unknowingly downloading only `Scan-PythonPackages.ps1` and losing native binary inspection coverage because `inspect_binary.py` was absent.
+
 ## [1.5.1] - 2026-05-03
 
 ### Changed

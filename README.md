@@ -3,7 +3,7 @@
 [![Smoke Tests](https://github.com/StevenMcGann/scan-python-packages/actions/workflows/smoke.yml/badge.svg)](https://github.com/StevenMcGann/scan-python-packages/actions/workflows/smoke.yml)
 [![Security](https://github.com/StevenMcGann/scan-python-packages/actions/workflows/security.yml/badge.svg)](https://github.com/StevenMcGann/scan-python-packages/actions/workflows/security.yml)
 
-`Scan-PythonPackages.ps1` is a Windows PowerShell 5.1 static security scanner for Python packages submitted through a media transfer review workflow. It is designed for operator-driven inspection o[...]
+`Scan-PythonPackages.ps1` is a Windows PowerShell 5.1 static security scanner for Python packages submitted through a media transfer review workflow. It is designed for operator-driven inspection of untrusted Python artifacts before they are admitted to a trusted environment.
 
 ## What This Is
 
@@ -26,7 +26,7 @@ Scan-PythonPackages.ps1
 inspect_binary.py
 ```
 
-`inspect_binary.py` is required for v1.5+ native binary inspection. If it is missing, the scanner still runs, but PE/ELF binary triage is skipped and the log contains `Binary inspection helper not[...]
+`inspect_binary.py` is required for v1.5+ native binary inspection. If it is missing, the scanner still runs, but PE/ELF binary triage is skipped and the log contains `Binary inspection helper not found`.
 
 From a Windows PowerShell 5.1 prompt:
 
@@ -70,7 +70,7 @@ python tests\fixtures\build_fixtures.py
 
 ## Versioning And Releases
 
-The scanner version is set in the `.NOTES` block of `src\Scan-PythonPackages.ps1`, marked with an annotated git tag such as `v1.5`, and shipped through a GitHub Release. Future backlog items shoul[...]
+The scanner version is set in the `.NOTES` block of `src\Scan-PythonPackages.ps1`, marked with an annotated git tag such as `v1.5`, and shipped through a GitHub Release. Future backlog items should be developed on feature branches and merged into the canonical file instead of creating new version-suffixed script filenames.
 
 ## License
 

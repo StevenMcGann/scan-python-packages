@@ -275,7 +275,7 @@ Describe 'Get-PackageUnits archive-extension classification' {
 }
 
 # ============================================================
-# Fixture corpus manifest (v1.5 schema, v1.5.2 scanner-output contract)
+# Fixture corpus manifest (v1.6 schema, v1.6.0 scanner-output contract)
 # ============================================================
 
 Describe 'Fixture corpus manifest' {
@@ -287,9 +287,9 @@ Describe 'Fixture corpus manifest' {
         $script:FixtureManifest = Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
     }
 
-    It 'Uses schemaVersion 1.5 for scanner v1.5.2' {
-        $script:FixtureManifest.schemaVersion | Should -Be '1.5'
-        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.5.2'
+    It 'Uses schemaVersion 1.6 for scanner v1.6.0' {
+        $script:FixtureManifest.schemaVersion | Should -Be '1.6'
+        $script:FixtureManifest.scannerVersionTarget | Should -Be '1.6.0'
     }
 
     It 'Contains the required corpus directories' {
@@ -299,7 +299,7 @@ Describe 'Fixture corpus manifest' {
     }
 
     It 'Declares every generated fixture path and every path exists' {
-        @($script:FixtureManifest.fixtures).Count | Should -Be 31
+        @($script:FixtureManifest.fixtures).Count | Should -Be 36
 
         foreach ($fixture in $script:FixtureManifest.fixtures) {
             $fixture.path | Should -Not -BeNullOrEmpty
@@ -307,7 +307,7 @@ Describe 'Fixture corpus manifest' {
         }
     }
 
-    It 'Covers every supported archive format and loose .py/.pyw files' {
+    It 'Covers every supported archive format, loose Python files, and notebooks' {
         $paths = @($script:FixtureManifest.fixtures | ForEach-Object { $_.path })
 
         $paths | Where-Object { $_ -like '*.whl' }    | Should -Not -BeNullOrEmpty
@@ -317,11 +317,12 @@ Describe 'Fixture corpus manifest' {
         $paths | Where-Object { $_ -like '*.tgz' }    | Should -Not -BeNullOrEmpty
         $paths | Where-Object { $_ -like '*.py' }     | Should -Not -BeNullOrEmpty
         $paths | Where-Object { $_ -like '*.pyw' }    | Should -Not -BeNullOrEmpty
+        $paths | Where-Object { $_ -like '*.ipynb' }  | Should -Not -BeNullOrEmpty
     }
 
     It 'Marks scannable fixtures as expecting JSON summaries' {
         $scannable = @($script:FixtureManifest.fixtures |
-            Where-Object { $_.kind -in @('archive', 'pyfile') })
+            Where-Object { $_.kind -in @('archive', 'pyfile', 'notebook') })
 
         foreach ($fixture in $scannable) {
             $fixture.expectsJson | Should -BeTrue
@@ -355,6 +356,7 @@ Describe 'Fixture corpus manifest' {
         $tools | Should -Contain 'detect-secrets'
         $tools | Should -Contain 'pip-audit'
         $tools | Should -Contain 'BinaryInspection'
+        $tools | Should -Contain 'NotebookParser'
     }
 
     It 'Represents version-dependent weak-crypto Bandit IDs as an either-or expectation' {
@@ -480,6 +482,7 @@ Describe 'Find-UnsupportedFiles' {
         New-Item -ItemType Directory -Path $script:UnsupportedRoot -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $script:UnsupportedRoot '.reports') -Force | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot 'module.py'), "pass`n")
+        [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot 'analysis.ipynb'), '{"cells":[],"nbformat":4,"nbformat_minor":5}')
         [System.IO.File]::WriteAllBytes((Join-Path $script:UnsupportedRoot 'pkg.tar.gz'), [byte[]](31,139,8,0))
         [System.IO.File]::WriteAllBytes((Join-Path $script:UnsupportedRoot 'package.whl'), [byte[]](80,75,3,4))
         [System.IO.File]::WriteAllText((Join-Path $script:UnsupportedRoot 'README.md'), "# readme`n")
@@ -498,8 +501,83 @@ Describe 'Find-UnsupportedFiles' {
         $unsupported = @(Find-UnsupportedFiles -ScanRoot $script:UnsupportedRoot)
 
         @($unsupported.RelativePath) | Should -Not -Contain 'pkg.tar.gz'
+        @($unsupported.RelativePath) | Should -Not -Contain 'analysis.ipynb'
         @($unsupported.RelativePath) | Should -Not -Contain 'summary_previous.txt'
         @($unsupported.RelativePath | Where-Object { $_ -like '.reports*' }) | Should -BeNullOrEmpty
+    }
+}
+
+# ============================================================
+# Notebook code-cell projection
+# ============================================================
+
+Describe 'Convert-NotebookToPythonSource' {
+
+    BeforeEach {
+        $script:NotebookRoot = Join-Path $TestDrive 'notebooks'
+        $script:NotebookOut = Join-Path $TestDrive 'notebook-projections'
+        New-Item -ItemType Directory -Path $script:NotebookRoot -Force | Out-Null
+    }
+
+    It 'Writes code cells to a temporary Python projection without markdown text' {
+        $notebookPath = Join-Path $script:NotebookRoot 'analysis.ipynb'
+        $notebook = [PSCustomObject]@{
+            cells = @(
+                [PSCustomObject]@{ cell_type = 'markdown'; source = @('# Heading') },
+                [PSCustomObject]@{ cell_type = 'code'; source = @('eval(input("expr: "))', "`n"); outputs = @() }
+            )
+            nbformat = 4
+            nbformat_minor = 5
+            metadata = [PSCustomObject]@{}
+        }
+        [System.IO.File]::WriteAllText($notebookPath, ($notebook | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+
+        $result = Convert-NotebookToPythonSource -NotebookPath $notebookPath -OutputRoot $script:NotebookOut -OutputName 'analysis.py'
+
+        $result.Success | Should -BeTrue
+        $result.SourcePath | Should -Exist
+        $source = Get-Content -LiteralPath $result.SourcePath -Raw
+        $source | Should -Match 'eval'
+        $source | Should -Not -Match '# Heading'
+        @($result.Findings).Count | Should -Be 0
+    }
+
+    It 'Reports saved outputs and attachments as notebook parser findings' {
+        $notebookPath = Join-Path $script:NotebookRoot 'outputs.ipynb'
+        $notebook = [PSCustomObject]@{
+            cells = @(
+                [PSCustomObject]@{
+                    cell_type = 'code'
+                    source = @('answer = 42')
+                    outputs = @([PSCustomObject]@{ output_type = 'stream'; name = 'stdout'; text = @('42') })
+                },
+                [PSCustomObject]@{
+                    cell_type = 'markdown'
+                    source = @('![inline](attachment:image.png)')
+                    attachments = [PSCustomObject]@{ 'image.png' = [PSCustomObject]@{ 'image/png' = 'AAAA' } }
+                }
+            )
+            nbformat = 4
+            nbformat_minor = 5
+            metadata = [PSCustomObject]@{}
+        }
+        [System.IO.File]::WriteAllText($notebookPath, ($notebook | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+
+        $result = Convert-NotebookToPythonSource -NotebookPath $notebookPath -OutputRoot $script:NotebookOut -OutputName 'outputs.py'
+
+        $result.Success | Should -BeTrue
+        @($result.Findings | Where-Object { $_.TestID -eq 'NOTEBOOK-SAVED-OUTPUT' }).Count | Should -Be 1
+        @($result.Findings | Where-Object { $_.TestID -eq 'NOTEBOOK-ATTACHMENT' }).Count | Should -Be 1
+    }
+
+    It 'Fails closed when notebook JSON is malformed' {
+        $notebookPath = Join-Path $script:NotebookRoot 'bad.ipynb'
+        [System.IO.File]::WriteAllText($notebookPath, '{not valid json')
+
+        $result = Convert-NotebookToPythonSource -NotebookPath $notebookPath -OutputRoot $script:NotebookOut -OutputName 'bad.py'
+
+        $result.Success | Should -BeFalse
+        @($result.Findings | Where-Object { $_.Tool -eq 'NotebookParser' -and $_.Severity -eq 'HIGH' -and $_.TestID -eq 'NOTEBOOK-MALFORMED' }).Count | Should -Be 1
     }
 }
 

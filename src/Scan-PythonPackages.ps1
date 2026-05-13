@@ -10,11 +10,14 @@
       1. Checks and installs required scanning tools (Bandit, pip-audit, detect-secrets, pefile, pyelftools).
       2. Prompts the operator for a folder containing Python packages to scan.
       3. Extracts archives (.whl, .egg, .zip, .tar.gz, .tgz) into a staging workspace.
+         Extracts Jupyter notebook code cells from .ipynb files into temporary
+         Python source projections for static analysis.
       4. Scans all Python source code for:
            - Risky code patterns (Bandit)
            - Hardcoded secrets / credentials (detect-secrets)
            - Known CVE vulnerabilities in dependencies (pip-audit)
            - Native binary triage (.pyd, .so, .dll)
+           - Notebook code-cell analysis (.ipynb, code cells only)
       5. Surfaces unsupported files in the scan root so operators can review skipped content.
       6. Writes a flat human-readable summary report for operator review.
       7. Writes a timestamped run log for troubleshooting and audit purposes.
@@ -31,7 +34,7 @@
 
 .NOTES
     Author      : Generated for media transfer security review workflow
-    Version     : 1.5.2
+    Version     : 1.6.0
     Requires    : PowerShell 5.1+, Python 3.x (with pip), internet access for tool install
     Output      : <scan-root>\.reports\summary_<timestamp>.txt           (operator report)
                   <scan-root>\.reports\summary_<timestamp>.json          (machine-readable, same timestamp)
@@ -82,6 +85,10 @@ $ARCHIVE_EXTENSIONS = @('.whl', '.egg', '.zip', '.tar.gz', '.tgz')
 
 # File extensions treated as direct Python source
 $PYTHON_SOURCE_EXTENSIONS = @('.py', '.pyw')
+
+# File extensions treated as Jupyter notebooks. Notebooks are never executed;
+# code cells are copied to temporary .py projections and scanned statically.
+$NOTEBOOK_EXTENSIONS = @('.ipynb')
 
 # ============================================================
 # LOGGING SETUP
@@ -475,7 +482,7 @@ function Get-PackageUnits {
     <#
     .SYNOPSIS
         Discover all Python packages and source files in the scan root folder.
-        Returns a list of objects with Kind (archive|pyfile) and Path.
+        Returns a list of objects with Kind (archive|pyfile|notebook) and Path.
     #>
     param([string]$ScanRoot)
 
@@ -513,7 +520,17 @@ function Get-PackageUnits {
         Write-Log -Level DEBUG -Msg "Found Python source: $($f.FullName)"
     }
 
-    Write-Log -Level INFO -Msg "Total units found: $($units.Count) ($($archiveFiles.Count) archives, $pyFilesAdded source files)"
+    $notebookFiles = @(Get-ChildItem -LiteralPath $ScanRoot -Recurse -File |
+        Where-Object { $_.Extension.ToLower() -in $NOTEBOOK_EXTENSIONS })
+
+    $notebooksAdded = 0
+    foreach ($f in $notebookFiles) {
+        $notebooksAdded++
+        $units.Add([PSCustomObject]@{ Kind = 'notebook'; Path = $f.FullName; Name = $f.Name })
+        Write-Log -Level DEBUG -Msg "Found Jupyter notebook: $($f.FullName)"
+    }
+
+    Write-Log -Level INFO -Msg "Total units found: $($units.Count) ($($archiveFiles.Count) archives, $pyFilesAdded source files, $notebooksAdded notebooks)"
     return $units
 }
 
@@ -556,8 +573,9 @@ function Find-UnsupportedFiles {
         $ext  = $f.Extension.ToLower()
         $isArchive = ($ext -in $simpleArchiveExts) -or (@($compoundArchiveSuffs | Where-Object { $name.EndsWith($_) }).Count -gt 0)
         $isPythonSource = $ext -in $PYTHON_SOURCE_EXTENSIONS
+        $isNotebook = $ext -in $NOTEBOOK_EXTENSIONS
 
-        if (-not $isArchive -and -not $isPythonSource) {
+        if (-not $isArchive -and -not $isPythonSource -and -not $isNotebook) {
             $relativePath = $fullPath.Substring($scanRootFull.Length).TrimStart('\')
             $unsupported.Add([PSCustomObject]@{
                 Path         = $fullPath
@@ -570,6 +588,171 @@ function Find-UnsupportedFiles {
 
     # Sort for deterministic text and JSON output, making re-runs and tests stable.
     return @($unsupported.ToArray() | Sort-Object RelativePath)
+}
+
+function ConvertTo-NotebookFinding {
+    <#
+    .SYNOPSIS
+        Create a normalized finding for notebook parser and coverage warnings.
+    #>
+    param(
+        [string]$NotebookPath,
+        [string]$Severity,
+        [string]$Issue,
+        [string]$TestID,
+        [int]$CellNumber = 0
+    )
+
+    return [PSCustomObject]@{
+        Tool       = 'NotebookParser'
+        Severity   = $Severity
+        Confidence = 'HIGH'
+        File       = $NotebookPath
+        Line       = $CellNumber
+        Issue      = $Issue
+        TestID     = $TestID
+    }
+}
+
+function Convert-NotebookToPythonSource {
+    <#
+    .SYNOPSIS
+        Convert Jupyter notebook code cells into a temporary Python source file.
+    .DESCRIPTION
+        The notebook is parsed as JSON and never executed. Only cells with
+        cell_type = 'code' are copied into the generated .py file. Markdown,
+        saved outputs, and attachments are not treated as executable Python;
+        outputs and attachments are surfaced as parser findings so operators
+        know non-code notebook payloads were present.
+    .OUTPUTS
+        PSCustomObject with Success, SourcePath, and Findings.
+    #>
+    param(
+        [string]$NotebookPath,
+        [string]$OutputRoot,
+        [string]$OutputName
+    )
+
+    $findings = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+    try {
+        New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+
+        $raw = Get-Content -LiteralPath $NotebookPath -Raw -Encoding UTF8
+        $notebook = $raw | ConvertFrom-Json
+
+        if (-not $notebook.PSObject.Properties['cells']) {
+            $findings.Add((ConvertTo-NotebookFinding `
+                -NotebookPath $NotebookPath `
+                -Severity 'HIGH' `
+                -Issue 'Notebook JSON does not contain a cells array; code cells could not be analyzed.' `
+                -TestID 'NOTEBOOK-MALFORMED')) | Out-Null
+
+            return [PSCustomObject]@{ Success = $false; SourcePath = $null; Findings = $findings.ToArray() }
+        }
+
+        if (-not $OutputName) {
+            $safeBase = [System.IO.Path]::GetFileNameWithoutExtension($NotebookPath) -replace '[^\w\-.]', '_'
+            if ([string]::IsNullOrWhiteSpace($safeBase)) { $safeBase = 'notebook' }
+            $OutputName = "$safeBase.ipynb.py"
+        }
+
+        $sourcePath = Join-Path $OutputRoot $OutputName
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $lines.Add("# Generated from Jupyter notebook: $NotebookPath") | Out-Null
+        $lines.Add("# Static scanner projection: code cells only; notebook was not executed.") | Out-Null
+        $lines.Add("") | Out-Null
+
+        $cellNumber = 0
+        foreach ($cell in @($notebook.cells)) {
+            $cellNumber++
+            $cellType = ''
+            if ($cell.PSObject.Properties['cell_type']) {
+                $cellType = [string]$cell.cell_type
+            }
+
+            if ($cell.PSObject.Properties['outputs'] -and @($cell.outputs).Count -gt 0) {
+                $findings.Add((ConvertTo-NotebookFinding `
+                    -NotebookPath $NotebookPath `
+                    -Severity 'MEDIUM' `
+                    -Issue "Notebook cell $cellNumber contains saved outputs that were not analyzed as Python code." `
+                    -TestID 'NOTEBOOK-SAVED-OUTPUT' `
+                    -CellNumber $cellNumber)) | Out-Null
+            }
+
+            if ($cell.PSObject.Properties['attachments'] -and $cell.attachments) {
+                $attachmentCount = @($cell.attachments.PSObject.Properties).Count
+                if ($attachmentCount -gt 0) {
+                    $findings.Add((ConvertTo-NotebookFinding `
+                        -NotebookPath $NotebookPath `
+                        -Severity 'MEDIUM' `
+                        -Issue "Notebook cell $cellNumber contains $attachmentCount attachment(s) that were not analyzed as Python code." `
+                        -TestID 'NOTEBOOK-ATTACHMENT' `
+                        -CellNumber $cellNumber)) | Out-Null
+                }
+            }
+
+            if ($cellType -ne 'code') {
+                continue
+            }
+
+            $source = ''
+            if ($cell.PSObject.Properties['source'] -and $null -ne $cell.source) {
+                if ($cell.source -is [array]) {
+                    $source = (@($cell.source) -join '')
+                } else {
+                    $source = [string]$cell.source
+                }
+            }
+
+            $lines.Add("# Cell $cellNumber") | Out-Null
+            foreach ($line in ($source -split "`r?`n")) {
+                $lines.Add($line) | Out-Null
+            }
+            $lines.Add("") | Out-Null
+        }
+
+        [System.IO.File]::WriteAllLines($sourcePath, $lines.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Log -Level INFO -Msg "Generated notebook code projection: $sourcePath"
+        return [PSCustomObject]@{ Success = $true; SourcePath = $sourcePath; Findings = $findings.ToArray() }
+    } catch {
+        $findings.Add((ConvertTo-NotebookFinding `
+            -NotebookPath $NotebookPath `
+            -Severity 'HIGH' `
+            -Issue "Notebook could not be parsed for code-cell analysis: $_" `
+            -TestID 'NOTEBOOK-MALFORMED')) | Out-Null
+
+        Write-Log -Level WARN -Msg "Notebook parse error for ${NotebookPath}: $_"
+        return [PSCustomObject]@{ Success = $false; SourcePath = $null; Findings = $findings.ToArray() }
+    }
+}
+
+function Convert-NotebookDirectoryToPythonSources {
+    <#
+    .SYNOPSIS
+        Convert all notebooks under a directory into static Python projections.
+    #>
+    param(
+        [string]$RootPath,
+        [string]$OutputRoot
+    )
+
+    $results = [System.Collections.Generic.List[PSCustomObject]]::new()
+    if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        return @()
+    }
+
+    $rootFull = (Resolve-Path -LiteralPath $RootPath).Path.TrimEnd('\')
+    foreach ($notebook in @(Get-ChildItem -LiteralPath $RootPath -Recurse -File -Filter '*.ipynb' -ErrorAction SilentlyContinue)) {
+        $relative = $notebook.FullName.Substring($rootFull.Length).TrimStart('\')
+        $safeName = ($relative -replace '[^\w\-.]', '_') + '.py'
+        $results.Add((Convert-NotebookToPythonSource `
+            -NotebookPath $notebook.FullName `
+            -OutputRoot $OutputRoot `
+            -OutputName $safeName)) | Out-Null
+    }
+
+    return $results.ToArray()
 }
 
 function Expand-PythonArchive {
@@ -726,7 +909,8 @@ function Invoke-DetectSecretsScan {
     #>
     param(
         [string]$ScriptsDir,
-        [string]$TargetPath
+        [string]$TargetPath,
+        [string]$ExcludeFiles
     )
 
     $dsExe = Join-Path $ScriptsDir 'detect-secrets.exe'
@@ -753,7 +937,12 @@ function Invoke-DetectSecretsScan {
 
         Push-Location -LiteralPath $pushDir
         try {
-            & $dsExe scan --all-files --no-verify $scanArg 2>$null | Out-File -FilePath $tmpJson -Encoding UTF8
+            $dsArgs = @('scan', '--all-files', '--no-verify')
+            if ($ExcludeFiles) {
+                $dsArgs += @('--exclude-files', $ExcludeFiles)
+            }
+            $dsArgs += $scanArg
+            & $dsExe @dsArgs 2>$null | Out-File -FilePath $tmpJson -Encoding UTF8
         } finally {
             Pop-Location
         }
@@ -1145,7 +1334,8 @@ function Write-SummaryReport {
     $lines.Add("  Bandit          : Code pattern analysis (eval, pickle, subprocess, weak crypto)")
     $lines.Add("  detect-secrets  : Hardcoded secrets, tokens, API keys, credentials")
     $lines.Add("  pip-audit       : Dependency CVE check against PyPI Advisory Database")
-    $lines.Add("  BinaryInspect : Native binary triage (format validation, imports, entropy, signatures)")
+    $lines.Add("  BinaryInspect   : Native binary triage (format validation, imports, entropy, signatures)")
+    $lines.Add("  NotebookParser  : Jupyter notebook code-cell projection and notebook payload warnings")
     $lines.Add("")
     $lines.Add("  NOTE: This report is based on STATIC analysis only.")
     $lines.Add("        No package code was executed during this scan.")
@@ -1242,7 +1432,7 @@ function Write-JsonReport {
 
     $report = [PSCustomObject]@{
         schemaVersion  = '1.0'
-        scannerVersion = '1.5.2'
+        scannerVersion = '1.6.0'
         scanDate       = (Get-Date).ToUniversalTime().ToString('o')
         scanRoot       = $ScanRoot
         elapsedSeconds = $elapsedSecs
@@ -1375,7 +1565,7 @@ if ($units.Count -eq 0 -and $unsupportedFiles.Count -eq 0) {
     Write-Host ""
     Write-Host "  No recognizable Python files found. Supported types:" -ForegroundColor Yellow
     Write-Host "    Archives : .whl  .egg  .zip  .tar.gz  .tgz" -ForegroundColor Yellow
-    Write-Host "    Source   : .py  .pyw" -ForegroundColor Yellow
+    Write-Host "    Source   : .py  .pyw  .ipynb" -ForegroundColor Yellow
     exit 0
 }
 
@@ -1403,6 +1593,7 @@ foreach ($unit in $units) {
 
     try {
         # Determine the directory to scan
+        $notebookProjectionRoot = $null
         if ($unit.Kind -eq 'archive') {
             # Extract archive to staging workspace
             $safeName  = $unit.Name -replace '[^\w\-.]', '_'
@@ -1418,6 +1609,31 @@ foreach ($unit in $units) {
             }
 
             $scanTarget = $stageDir
+
+            # Archives can contain notebooks. Project their code cells into
+            # temporary .py files so Bandit/detect-secrets see notebook code.
+            $notebookProjectionRoot = Join-Path $workspaceDir "notebooks_$safeName"
+            $notebookResults = @(Convert-NotebookDirectoryToPythonSources -RootPath $scanTarget -OutputRoot $notebookProjectionRoot)
+            foreach ($notebookResult in $notebookResults) {
+                foreach ($f in @($notebookResult.Findings)) { $findings.Add($f) }
+            }
+        }
+        elseif ($unit.Kind -eq 'notebook') {
+            # Loose notebook — scan only the generated code-cell projection.
+            $safeName = $unit.Name -replace '[^\w\-.]', '_'
+            $notebookProjectionRoot = Join-Path $workspaceDir "notebook_$safeName"
+            $notebookResult = Convert-NotebookToPythonSource `
+                -NotebookPath $unit.Path `
+                -OutputRoot $notebookProjectionRoot `
+                -OutputName "$safeName.py"
+
+            foreach ($f in @($notebookResult.Findings)) { $findings.Add($f) }
+
+            if ($notebookResult.Success) {
+                $scanTarget = $notebookResult.SourcePath
+            } else {
+                $scanTarget = $null
+            }
         }
         else {
             # Loose .py file — scan the file directly
@@ -1425,8 +1641,22 @@ foreach ($unit in $units) {
         }
 
         # Run all scanners on the target
-        foreach ($f in (Invoke-BanditScan       -ScriptsDir $venv.Scripts -TargetPath $scanTarget)) { $findings.Add($f) }
-        foreach ($f in (Invoke-DetectSecretsScan -ScriptsDir $venv.Scripts -TargetPath $scanTarget)) { $findings.Add($f) }
+        if ($scanTarget) {
+            foreach ($f in (Invoke-BanditScan       -ScriptsDir $venv.Scripts -TargetPath $scanTarget)) { $findings.Add($f) }
+            $detectSecretsExclude = $null
+            if ($unit.Kind -eq 'archive') {
+                # Notebook code cells are scanned through generated projections
+                # below. Exclude raw .ipynb JSON here to avoid duplicate secret
+                # findings and line numbers that point into notebook JSON.
+                $detectSecretsExclude = '\.ipynb$'
+            }
+            foreach ($f in (Invoke-DetectSecretsScan -ScriptsDir $venv.Scripts -TargetPath $scanTarget -ExcludeFiles $detectSecretsExclude)) { $findings.Add($f) }
+        }
+
+        if ($unit.Kind -eq 'archive' -and $notebookProjectionRoot -and (Test-Path -LiteralPath $notebookProjectionRoot -PathType Container)) {
+            foreach ($f in (Invoke-BanditScan       -ScriptsDir $venv.Scripts -TargetPath $notebookProjectionRoot)) { $findings.Add($f) }
+            foreach ($f in (Invoke-DetectSecretsScan -ScriptsDir $venv.Scripts -TargetPath $notebookProjectionRoot)) { $findings.Add($f) }
+        }
 
         # CVE audit/SBOM require package metadata; binary inspection is useful
         # for any extracted archive.

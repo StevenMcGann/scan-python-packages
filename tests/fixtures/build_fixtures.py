@@ -343,6 +343,47 @@ def make_tar(filename: str, files: dict[str, str | bytes], output_dir: Path = AR
                     tf.addfile(info, io.BytesIO(data))
 
 
+def make_notebook(cells: list[dict[str, object]]) -> bytes:
+    notebook = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {
+                "name": "python",
+                "pygments_lexer": "ipython3",
+            },
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    return text_bytes(json.dumps(notebook, indent=2, sort_keys=True) + "\n")
+
+
+def code_cell(source: str, outputs: list[dict[str, object]] | None = None) -> dict[str, object]:
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": outputs or [],
+        "source": source.splitlines(keepends=True),
+    }
+
+
+def markdown_cell(source: str, attachments: dict[str, object] | None = None) -> dict[str, object]:
+    cell: dict[str, object] = {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": source.splitlines(keepends=True),
+    }
+    if attachments:
+        cell["attachments"] = attachments
+    return cell
+
+
 def finding(tool: str, severity: str, min_count: int = 1, test_id: str | None = None) -> dict[str, object]:
     item: dict[str, object] = {"tool": tool, "severity": severity, "min": min_count}
     if test_id:
@@ -442,6 +483,19 @@ def build() -> list[dict[str, object]]:
             True,
         ),
         ("weird[name],and&stuff-1.0-py3-none-any.whl", "weird_name_and_stuff", {"weird_name_and_stuff/__init__.py": "pass\n"}, [], True),
+        (
+            "notebook_pkg-1.0-py3-none-any.whl",
+            "notebook_pkg",
+            {
+                "notebook_pkg/__init__.py": "pass\n",
+                "notebook_pkg/analysis.ipynb": make_notebook([
+                    markdown_cell("# Analysis\n"),
+                    code_cell('eval(input("expr: "))\n'),
+                ]),
+            },
+            [],
+            True,
+        ),
     ]
     for spec in wheel_specs:
         make_wheel(*spec)
@@ -455,6 +509,13 @@ def build() -> list[dict[str, object]]:
     write_file(LOOSE_DIR / "clean_module.py", text_bytes("pass\n"))
     write_file(LOOSE_DIR / "bad_eval.py", text_bytes('eval(input("expr: "))\n'))
     write_file(LOOSE_DIR / "with_secret.pyw", text_bytes('AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"\n'))
+    write_file(LOOSE_DIR / "notebook_eval.ipynb", make_notebook([code_cell('eval(input("expr: "))\n')]))
+    write_file(LOOSE_DIR / "notebook_secret.ipynb", make_notebook([code_cell('AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"\n')]))
+    write_file(LOOSE_DIR / "notebook_outputs.ipynb", make_notebook([
+        code_cell("answer = 42\n", [{"output_type": "stream", "name": "stdout", "text": ["42\n"]}]),
+        markdown_cell("![inline](attachment:image.png)\n", {"image.png": {"image/png": "AAAA"}}),
+    ]))
+    write_file(MALFORMED_DIR / "bad_notebook.ipynb", text_bytes("{not valid notebook json\n"))
     write_file(NON_PYTHON_DIR / "README.md", text_bytes("# Non-Python fixture\n"))
     write_file(NON_PYTHON_DIR / "data.csv", text_bytes("id,value\n1,fixture\n"))
     write_file(NON_PYTHON_DIR / "photo.jpg", b"\xff\xd8\xff\xe0" + seeded_bytes("jpg", 32) + b"\xff\xd9")
@@ -488,18 +549,23 @@ def build() -> list[dict[str, object]]:
         fixture("archives/no_metadata_pkg-1.0-py3-none-any.whl", "archive", "No Requires-Dist - verifies SBOM is skipped", "CLEAN"),
         fixture("archives/env_marker_pkg-1.0-py3-none-any.whl", "archive", "Environment marker stripping for pip-audit", "HIGH", [finding("pip-audit", "HIGH", 1)], True, {"format": "CycloneDX", "componentsMin": 1, "componentNames": ["requests"]}),
         fixture("archives/weird[name],and&stuff-1.0-py3-none-any.whl", "archive", "Stage directory sanitizer coverage", "CLEAN"),
+        fixture("archives/notebook_pkg-1.0-py3-none-any.whl", "archive", "Notebook code cell inside archive triggers Bandit", "MEDIUM", [finding("Bandit", "MEDIUM", test_id="B307")]),
         fixture("malformed/truncated_pkg-1.0-py3-none-any.whl", "malformed-archive", "Extraction failure is logged and run continues", "ERROR", [], False, None, False),
+        fixture("malformed/bad_notebook.ipynb", "notebook", "Malformed notebook produces parser finding", "HIGH", [finding("NotebookParser", "HIGH", test_id="NOTEBOOK-MALFORMED")]),
         fixture("loose/clean_module.py", "pyfile", "Clean loose Python source", "CLEAN"),
         fixture("loose/bad_eval.py", "pyfile", "Loose Bandit B307 trigger", "MEDIUM", [finding("Bandit", "MEDIUM", test_id="B307")]),
         fixture("loose/with_secret.pyw", "pyfile", "Loose .pyw detect-secrets trigger", "HIGH", [finding("detect-secrets", "HIGH")]),
+        fixture("loose/notebook_eval.ipynb", "notebook", "Loose notebook Bandit B307 trigger", "MEDIUM", [finding("Bandit", "MEDIUM", test_id="B307")]),
+        fixture("loose/notebook_secret.ipynb", "notebook", "Loose notebook detect-secrets trigger", "HIGH", [finding("detect-secrets", "HIGH")]),
+        fixture("loose/notebook_outputs.ipynb", "notebook", "Notebook saved-output and attachment visibility", "MEDIUM", [finding("NotebookParser", "MEDIUM", test_id="NOTEBOOK-SAVED-OUTPUT"), finding("NotebookParser", "MEDIUM", test_id="NOTEBOOK-ATTACHMENT")]),
         fixture("empty", "directory", "Empty folder early-exit coverage", "CLEAN", [], False, None, False),
         fixture("non-python", "directory", "Unsupported-only folder produces a clean warning report", "CLEAN", [], False, None, True, ["README.md", "data.csv", "photo.jpg"]),
         fixture("mixed", "directory", "Supported and unsupported files mixed", "CLEAN", [], False, None, True, ["README.md", "photo.jpg"]),
     ]
 
     manifest = {
-        "schemaVersion": "1.5",
-        "scannerVersionTarget": "1.5.2",
+        "schemaVersion": "1.6",
+        "scannerVersionTarget": "1.6.0",
         "fixtures": fixtures,
     }
     write_file(CORPUS_ROOT / "manifest.json", text_bytes(json.dumps(manifest, indent=2, sort_keys=True) + "\n"))

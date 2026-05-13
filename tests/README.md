@@ -28,7 +28,7 @@ Invoke-Pester .\tests\Scan-PythonPackages.Tests.ps1 -Output Detailed
 
 | Describe block | Type | What it exercises |
 |---|---|---|
-| `Compare-Versions` | Integration | 16 cases: exact match, semver above/below, PEP 440 pre-releases (`rc1`, `a1`, `b2`, `.dev0`), post-releases (`.post1`), local-version (`+local.1`), epochs (`2!1.0.0`), empty inputs, garbage strings, missing executable |
+| `Compare-Versions` | Integration | 17 cases: exact match, semver above/below, PEP 440 pre-releases (`rc1`, `a1`, `b2`, `.dev0`), post-releases (`.post1`), local-version (`+local.1`), epochs (`2!1.0.0`), empty inputs, garbage strings, missing executable |
 | `Get-RiskLevel` | Unit | HIGH / MEDIUM / LOW / CLEAN ladder; HIGH-wins-over-MEDIUM in mixed array; empty-array returns CLEAN |
 | `Get-PackageUnits archive-extension classification` | Unit | `.whl`, `.egg`, `.zip`, `.tgz` land in `simpleArchiveExts`; `.tar.gz` lands in `compoundArchiveSuffs`; counts verified |
 | `Find-Python` | Unit (mocked) | All three candidates fail → returns `$null`; `py` succeeds with "Python 3.11.4" → returns `'py'` |

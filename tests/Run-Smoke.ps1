@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Runs the full v1.4 scanner smoke/regression suite into a timestamped artifact folder.
+    Runs the scanner smoke/regression suite into a timestamped artifact folder.
 
 .DESCRIPTION
     Creates <repo-root>\test-results\<yyyymmdd_hhmmss>\ and captures Pester output,
@@ -429,6 +429,25 @@ function Test-ArchivesSmoke {
     return [PSCustomObject]@{ Passed = $ok; Notes = ("findings: {0} (HIGH {1} / MED {2} / LOW {3}), SBOMs: {4}, unsupported: {5}" -f $findings, $high, $medium, $low, $sboms, $unsupported) }
 }
 
+function Test-LooseSmoke {
+    param($StageDir, $SummaryJsonPath, $SummaryTxtPath, $SbomDir, $ExitCode)
+
+    if (-not (Test-Path -LiteralPath $SummaryJsonPath)) {
+        return [PSCustomObject]@{ Passed = $false; Notes = "summary.json missing; exit=$ExitCode" }
+    }
+    $json = Get-Content -LiteralPath $SummaryJsonPath -Raw | ConvertFrom-Json
+    $unsupported = @($json.unsupportedFiles).Count
+    $findings = [int]$json.totals.findings
+    $units = [int]$json.totals.units
+    $tools = @($json.units | ForEach-Object { $_.findings } | Where-Object { $_ } | ForEach-Object { $_.Tool } | Sort-Object -Unique)
+    $hasNotebookParser = $tools -contains 'NotebookParser'
+    $hasBandit = $tools -contains 'Bandit'
+    $hasDetectSecrets = $tools -contains 'detect-secrets'
+    $sboms = @(Get-ChildItem -LiteralPath $SbomDir -Filter '*.cdx.json' -ErrorAction SilentlyContinue).Count
+    $ok = ($ExitCode -eq 0 -and $unsupported -eq 0 -and $findings -gt 0 -and $units -eq 6 -and $sboms -eq 0 -and $json.overallRisk -eq 'HIGH' -and $hasNotebookParser -and $hasBandit -and $hasDetectSecrets)
+    return [PSCustomObject]@{ Passed = $ok; Notes = ("unsupported: {0}, findings: {1}, units: {2}, tools: {3}, risk: {4}" -f $unsupported, $findings, $units, ($tools -join ', '), $json.overallRisk) }
+}
+
 function Test-NonPythonSmoke {
     param($StageDir, $SummaryJsonPath, $SummaryTxtPath, $SbomDir, $ExitCode)
 
@@ -567,9 +586,10 @@ if (-not $PesterOnly) {
     Invoke-DeterminismStage | Out-Null
 
     Invoke-ScannerSmoke -StageName 'Scan: archives' -StageFolder '04-scan-archives' -SourcePath (Join-Path $CorpusRoot 'archives') -Validate ${function:Test-ArchivesSmoke} | Out-Null
-    Invoke-ScannerSmoke -StageName 'Scan: non-python' -StageFolder '05-scan-non-python' -SourcePath (Join-Path $CorpusRoot 'non-python') -Validate ${function:Test-NonPythonSmoke} | Out-Null
-    Invoke-ScannerSmoke -StageName 'Scan: mixed' -StageFolder '06-scan-mixed' -SourcePath (Join-Path $CorpusRoot 'mixed') -Validate ${function:Test-MixedSmoke} | Out-Null
-    Invoke-ScannerSmoke -StageName 'Re-scan exclusion' -StageFolder '07-rescan-non-python' -SourcePath (Join-Path $RunDir '05-scan-non-python\target') -Validate ${function:Test-RescanExclusion} | Out-Null
+    Invoke-ScannerSmoke -StageName 'Scan: loose source and notebooks' -StageFolder '05-scan-loose' -SourcePath (Join-Path $CorpusRoot 'loose') -Validate ${function:Test-LooseSmoke} | Out-Null
+    Invoke-ScannerSmoke -StageName 'Scan: non-python' -StageFolder '06-scan-non-python' -SourcePath (Join-Path $CorpusRoot 'non-python') -Validate ${function:Test-NonPythonSmoke} | Out-Null
+    Invoke-ScannerSmoke -StageName 'Scan: mixed' -StageFolder '07-scan-mixed' -SourcePath (Join-Path $CorpusRoot 'mixed') -Validate ${function:Test-MixedSmoke} | Out-Null
+    Invoke-ScannerSmoke -StageName 'Re-scan exclusion' -StageFolder '08-rescan-non-python' -SourcePath (Join-Path $RunDir '06-scan-non-python\target') -Validate ${function:Test-RescanExclusion} | Out-Null
 } else {
     Add-StageResult -Stage 'Fixtures' -Passed $true -Result 'SKIPPED' -Notes 'PesterOnly'
     Add-StageResult -Stage 'Determinism' -Passed $true -Result 'SKIPPED' -Notes 'PesterOnly'

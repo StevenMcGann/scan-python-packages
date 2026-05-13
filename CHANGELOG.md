@@ -6,11 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-13
+
+### Added
+
+- Added first-class Jupyter notebook (`.ipynb`) support. Notebook code cells are projected into temporary Python source files and scanned with Bandit and detect-secrets without executing notebook code.
+- Added `NotebookParser` findings for malformed notebooks, saved outputs, and attachments so reviewers can see notebook payloads that are not executable Python code-cell input.
+- Added deterministic notebook fixtures and Pester coverage for notebook discovery, unsupported-file exclusion, code-cell projection, saved-output/attachment warnings, and malformed notebook failure behavior.
+
+### Changed
+
+- Updated supported-input messaging, JSON scanner version metadata, README guidance, and release notes to include `.ipynb` coverage.
+- Updated scanner comments around input discovery and notebook projection so maintainer-facing documentation matches the implemented static-analysis behavior.
+
 ## [1.5.2] - 2026-05-03
 
 ### Changed
 
-- Documented the v1.5+ runtime package layout: `Scan-PythonPackages.ps1` and `inspect_binary.py` must be distributed together in the same directory.
+- Documented the two-file runtime package layout: `Scan-PythonPackages.ps1` and `inspect_binary.py` must be distributed together in the same directory.
 - Restored release-note/operator-documentation detail about package contents, install layout, binary-inspection prerequisites, troubleshooting, and release zip usage.
 - Updated release packaging expectation from a single script asset to a zip containing both required runtime files.
 
